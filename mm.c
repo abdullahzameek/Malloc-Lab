@@ -1,13 +1,6 @@
 /*
- * mm-naive.c - The fastest, least memory-efficient malloc package.
- * 
- * In this naive approach, a block is allocated by simply incrementing
- * the brk pointer.  A block is pure payload. There are no headers or
- * footers.  Blocks are never coalesced or reused. Realloc is
- * implemented directly using mm_malloc and mm_free.
+ *  
  *
- * NOTE TO STUDENTS: Replace this header comment with your own header
- * comment that gives a high level description of your solution.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,7 +17,7 @@
  ********************************************************/
 team_t team = {
     /* Team name */
-    "SegFault", 
+    "Our Lord and Savior, the SegFault", 
     /* First member's full name */
     "Lukas Zapolskas",
     /* First member's email address */
@@ -88,6 +81,7 @@ int mm_init(void)
     if ((heap_listp = mem_sbrk(4 * WSIZE)) == (void *)-1)
         return -1;
 
+	// Why is this line here?
     PUT(heap_listp, 0);                            /* Alignment Padding*/
     PUT(heap_listp + (1 * WSIZE), PACK(DSIZE, 1)); /* Prologue Heading */
     PUT(heap_listp + (2 * WSIZE), PACK(DSIZE, 1)); /* Prologue Footer  */
