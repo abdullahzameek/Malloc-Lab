@@ -29,18 +29,39 @@ team_t team = {
 
 /* Macros start here */
 
-/* single word (4) or double word (8) alignment */
-#define ALIGNMENT 8
-
-/* rounds up to the nearest multiple of ALIGNMENT */
-#define ALIGN(size) (((size) + (ALIGNMENT - 1)) & ~0x7)
-
-#define WSIZE 4
-#define DSIZE 8
+// We are leaving constants as macros, to make sure the interface
+// to the library remains unchanged, and will be using static inline
+// functions to make sure this remains the way it is.
+#define ALIGNMENT (2 * sizeof(void *))
+#define WSIZE sizeof(void *)
 #define CHUNKSIZE (1 << 12)
 
-#define PACK(size, alloc) ((size) | (alloc))
+// The number of size classes was chosen by enumerating the number of
+// size classes: {{1}, {2}, {5-8}, {9-16}, ..., {4097, +oo}}
+#define CLASSES 14
 
+// Overhead from initializing a lookup table in memory, not taking
+// into account the header and the footer size, each of which
+// should be another word. This only needs to be used when calculating
+// offsets.
+#define CLASS_OVERHEAD (14 * WSIZE)
+
+/* 
+ * get_class - Returns the size class in which the current chunk
+ * would fit. Does so with clever bit manipulation, borrowed from
+ * Hacker's Delight (2rd edition), saving us from branching and
+ * optimizing precious cycles.
+ */
+inline size_t get_class(size_t size) {
+    size = size | (size >> 1);
+    size = size | (size >> 2);
+    size = size | (size >> 4);
+    size = size | (size >> 8);
+    size = size | (size >> 16);
+    return size - (size >> 1) + 1;
+}
+
+// TODO Figure out what the best way to convert these functions is
 #define GET(p) (*(unsigned int *)(p))
 #define PUT(p, val) (*(unsigned int *)(p) = (val))
 
@@ -55,43 +76,39 @@ team_t team = {
 
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
-/* Macros end here */
 
-/*Static global variable begin here */
-
-static char* heap_listp = NULL; //we use a char since a char is essentially a DWORD
-
-/* Static global variables end here */
-
-/* Support function def */
-
+// Support function forward declaration
 static void *extend_heap(size_t words);
 static void *coalesce(void* bp);
+static void mm_checker(void* bp);
+static void check_block(void* bp);
+static void best_fit(size_t size);      
 
 
-
-/* End of Support Function Defs */
+static char *heap_list = NULL;
 
 /* 
  * mm_init - initialize the malloc package.
  */
 int mm_init(void)
 {
-    /* Create the initial empty heap */
-    if ((heap_listp = mem_sbrk(4 * WSIZE)) == (void *)-1)
+    if ((heap_list = mem_sbrk(4 * WSIZE + CLASS_OVERHEAD)) < 0) {
         return -1;
+    }
 
-	// Why is this line here?
-    PUT(heap_listp, 0);                            /* Alignment Padding*/
-    PUT(heap_listp + (1 * WSIZE), PACK(DSIZE, 1)); /* Prologue Heading */
-    PUT(heap_listp + (2 * WSIZE), PACK(DSIZE, 1)); /* Prologue Footer  */
-    PUT(heap_listp + (3 * WSIZE), PACK(0, 1));     /* Epilogue Header  */
-    heap_listp += (2 * WSIZE);
+    for (int i = 0; i < CLASSES; i++) {
+        PUT(heap_list + i * WSIZE, NULL);
+    }
+    heap_list += CLASSES * WSIZE;
 
-    /* Extend the empty heap with a free block of CHUNKSIZE bytes */
-    if (extend_heap(CHUNKSIZE / WSIZE) == NULL)
-        return -1;
-    return 0;
+    PUT(heap_list + WSIZE, PACK(WSIZE, 1));     // Prologue header
+    PUT(heap_list + (1*WSIZE), PACK(WSIZE, 1)); // Prologue footer
+    PUT(heap_list + (2*WSIZE), PACK(0, 1));     // Epilogue header
+    PUT(heap_list + (3*WSIZE), PACK(0, 1));     // Epilogue footer - can be optimized out
+    heap_list+= 2 * WSIZE;
+
+    // Extend heap
+
 }
 
 /* 
@@ -100,15 +117,7 @@ int mm_init(void)
  */
 void *mm_malloc(size_t size)
 {
-    int newsize = ALIGN(size + SIZE_T_SIZE);
-    void *p = mem_sbrk(newsize);
-    if (p == (void *)-1)
-        return NULL;
-    else
-    {
-        *(size_t *)p = size;
-        return (void *)((char *)p + SIZE_T_SIZE);
-    }
+
 }
 
 /*
@@ -124,69 +133,16 @@ void mm_free(void *ptr)
  */
 void *mm_realloc(void *ptr, size_t size)
 {
-    void *oldptr = ptr;
-    void *newptr;
-    size_t copySize;
 
-    newptr = mm_malloc(size);
-    if (newptr == NULL)
-        return NULL;
-    copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
-    if (size < copySize)
-        copySize = size;
-    memcpy(newptr, oldptr, copySize);
-    mm_free(oldptr);
-    return newptr;
 }
 
 static void *extend_heap(size_t words)
 {
-    char *bp;
-    size_t size;
 
-    /*Allocate an even number of words to maintain alignment */
-    size = (words % 2) ? (words + 1) * WSIZE : words * WSIZE;
-    if ((long)(bp = mem_sbrk(size)) == -1)
-        return NULL;
-
-    /* Initialize free block header/footer and the epilogue header */
-    PUT(HDRP(bp), PACK(size, 0));         /* Free block header */
-    PUT(FTRP(bp), PACK(size, 0));         /* Free block footer */
-    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); /* New epilogue header */
-
-    /* Coaslesce if the previous block was free */
-    return coalesce(bp);
 }
 
 static void *coalesce(void *bp) 
 {
-    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP));
-    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
-    size_t size = GET_SIZE(HDRP(bp));
+    
 
-    if (prev_alloc && next_alloc) {            /* Case 1 */
-    return bp;
-    }
-
-    else if (prev_alloc && !next_alloc) {      /* Case 2 */
-    size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
-    PUT(HDRP(bp), PACK(size, 0));
-    PUT(FTRP(bp), PACK(size,0));
-    }
-
-    else if (!prev_alloc && next_alloc) {      /* Case 3 */
-    size += GET_SIZE(HDRP(PREV_BLKP(bp)));
-    PUT(FTRP(bp), PACK(size, 0));
-    PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-    bp = PREV_BLKP(bp);
-    }
-
-    else {                                     /* Case 4 */
-    size += GET_SIZE(HDRP(PREV_BLKP(bp))) + 
-        GET_SIZE(FTRP(NEXT_BLKP(bp)));
-    PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-    PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
-    bp = PREV_BLKP(bp);
-    }   
-    return bp;
 }
