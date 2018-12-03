@@ -1,0 +1,26 @@
+Possible optimizations:
+	1. Some implementations might request more memory than necessary from heap, since asking from heap is a slow op
+	2. Best performance is achieved by implementing an explicit
+	doubly linked list of free nodes (reducing search space), in which
+	case we also have some control over node ordering. When freeing
+	we can choice to inseert it to the beginning of the list, instead
+	of the right position
+	3. 
+
+Notes:
+	1. Pointer arithmetic depends on type. How does it work on (void *) pointers
+	2. Many architectures expect multi-byte primitives to be aligned to 4-byte
+	boundaries (or 8-byte boundaries). If they're not, there are either
+	performance penalties, and others just crash.
+	3. "On GNU systems, the address is always a multiple of 8 on most systems
+	and a multiple of 16 on 64-bit systems."
+	4. size = ceil((requested + overhead + 15) / 16)
+	5. When implementing free, we need to reapply the offset
+	back to the real start of the block.
+	6. When marking a block as unused, we need to coalesce
+	7. With explicit lined lists simple first find algorithms are
+	used, but it needs to take into account the allocation strategy
+	and the sorting of the algorithm
+	8. Inserting in address order (address ordered policy) inserts
+	freed blocks in address order, requiring more time to free a block,
+	but causing less fragmentation.
