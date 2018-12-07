@@ -424,18 +424,18 @@ int mm_init(void)
     for (int i = 0; i < CLASSES; i++)
     {
         // TODO Replace this with a function call, just please no macros
-        put(heap_list + i * WSIZE, 0);
+        put(lookup_table + i * WSIZE, 0);
     }
 
     // The heap starts directly after the lookup table
-    heap_list = lookup_table + CLASS_OVERHEAD;
+    lookup_table = lookup_table + CLASS_OVERHEAD;
 
     // Allocate the footer of the prologue and the header of the epilogue
-    put(heap_list + (1 * WSIZE), pack(WSIZE, 1)); // Prologue footer
-    put(heap_list + (2 * WSIZE), pack(0, 1));     // Epilogue header
+    put(lookup_table + (1 * WSIZE), pack(WSIZE, 1)); // Prologue footer
+    put(lookup_table + (2 * WSIZE), pack(0, 1));     // Epilogue header
     // The heap will be growing from between the prologue and the epilogue, so that we could
     // make sure that all is well
-    heap_list += WSIZE;
+    lookup_table += WSIZE;
 
     // Extends the heap by a quasi-arbitrary initial amount
     if (extend_heap(CHUNKSIZE / WSIZE) == NULL)
