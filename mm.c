@@ -86,15 +86,16 @@ team_t team = {
 // functions to make sure this remains the way it is.
 #define ALIGNMENT (2 * sizeof(void *))
 #define WSIZE sizeof(void *)
+
 // System page size
-#define CHUNKSIZE (1L << 12)
+#define CHUNKSIZE (1L << 12) 
 
 // The minimum possible free chunk size. If we add this restriction, then
 // there should be no problems with allocation in the lower size classes.
 // Technically the minimum would be 4 * WSIZE + 1, but that would not
 // be aligned to the word boundary
 
-#define MINCHUNK (4 * WSIZE) + WSIZE
+#define MINCHUNK (4 * WSIZE)
 // The number of size classes was chosen by enumerating the number of
 // size classes: {{1}, {2}, {5-8}, {9-16}, ..., {4097, +oo}}
 // Should be increase this?
@@ -335,6 +336,8 @@ static inline void remove_free_block(void *pointer)
  * add_free_block - given a pointer, calculate its size class
  * from previous header and footer data, then do a linear 
  * search for where it should be added, with address ordering.
+ * 
+ * To add the free 
  */
 static inline void add_free_block(int class, void *pointer)
 {
@@ -365,7 +368,7 @@ static inline void add_free_block(int class, void *pointer)
  */
 static inline void *get_lookup_row(int class)
 {
-    if (class < 0 || class > CLASSES)
+    if (class < 0 || class < CLASSES)
     {
         return NULL;
     }
