@@ -58,6 +58,7 @@
  * -We use a simple first-fit memory allocation strategy, but should do address ordering for the insertion
  * -
  */
+
 #include <assert.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -87,10 +88,12 @@ team_t team = {
 #define WSIZE sizeof(void *)
 // System page size
 #define CHUNKSIZE (1L << 12)
+
 // The minimum possible free chunk size. If we add this restriction, then
 // there should be no problems with allocation in the lower size classes.
 // Technically the minimum would be 4 * WSIZE + 1, but that would not
 // be aligned to the word boundary
+
 #define MINCHUNK (4 * WSIZE) + WSIZE
 // The number of size classes was chosen by enumerating the number of
 // size classes: {{1}, {2}, {5-8}, {9-16}, ..., {4097, +oo}}
