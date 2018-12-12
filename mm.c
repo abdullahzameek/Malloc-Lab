@@ -256,7 +256,9 @@ static inline int get_class(size_t size)
     size = size | (size >> 16);
     // If within a predefined class size, return that size, otherwise return the
     // largest
-    return (size - (size >> 1) + 1) % CLASSES ? (size - (size >> 1) + 1) : CLASSES - 1;
+
+    return (size - (size >> 1) + 1);
+    // return (size - (size >> 1) + 1) % CLASSES ? (size - (size >> 1) + 1) : CLASSES - 1;
 }
 
 /* 
@@ -365,7 +367,7 @@ static inline void add_free_block(int class, void *pointer)
  */
 static inline void *get_lookup_row(int class)
 {
-    if (class < 0 || class > CLASSES)
+    if (class < 0 || class < CLASSES)
     {
         return NULL;
     }
@@ -458,7 +460,7 @@ int mm_init(void)
 void *mm_malloc(size_t size)
 {
     size_t aligned_size = align_to_word(size + 2 * WSIZE);
-    size_t size_class = get_class(aligned_size);
+    size_t sc = get_class(aligned_size);
     size_t extend_heap;
 
     // Ignore if current
@@ -467,7 +469,7 @@ void *mm_malloc(size_t size)
         return NULL;
     }
 
-    if (get_free_block(size_class, aligned_size) == NULL)
+    if (get_free_block(sc, aligned_size) == NULL)
     {
         // Here we need to extend the heap
     }
