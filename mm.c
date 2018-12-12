@@ -85,6 +85,7 @@ team_t team = {
 // functions to make sure this remains the way it is.
 #define ALIGNMENT (2 * sizeof(void *))
 #define WSIZE sizeof(void *)
+// System page size
 #define CHUNKSIZE (1L << 12)
 // The minimum possible free chunk size. If we add this restriction, then
 // there should be no problems with allocation in the lower size classes.
