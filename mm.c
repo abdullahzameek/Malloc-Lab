@@ -88,7 +88,7 @@ team_t team = {
 #define WSIZE sizeof(void *)
 
 // System page size
-#define CHUNKSIZE (1L << 12) 
+#define CHUNKSIZE (1L << 12)
 
 // The minimum possible free chunk size. If we add this restriction, then
 // there should be no problems with allocation in the lower size classes.
@@ -142,7 +142,6 @@ static void *extend_heap(size_t words);
 static void *coalesce(void *bp);
 static int mm_checkheap();
 static void check_block(void *bp);
-static void best_fit(size_t size);
 
 /* 
 
@@ -244,22 +243,17 @@ METHODS
 
 /* 
  * get_class - returns the size class in which the current chunk
- * would fit. Does so with clever bit manipulation, borrowed from
- * Hacker's Delight (2rd edition), saving us from branching and
- * optimizing precious cycles. 
+ * would fit.  
  */
 static inline int get_class(size_t size)
 {
-    size = size | (size >> 1);
-    size = size | (size >> 2);
-    size = size | (size >> 4);
-    size = size | (size >> 8);
-    size = size | (size >> 16);
-    // If within a predefined class size, return that size, otherwise return the
-    // largest
-
-    return (size - (size >> 1) + 1);
-    // return (size - (size >> 1) + 1) % CLASSES ? (size - (size >> 1) + 1) : CLASSES - 1;
+    for (int i = 0; i < CLASSES; i++) {
+        if (size < (1 << (4 + i))) {
+            // Making sure that the first chunk is 0
+            return i-1;
+        }
+    }
+    return CLASSES - 1;
 }
 
 /* 
@@ -320,14 +314,14 @@ static inline void remove_free_block(void *pointer)
     size_t *next = get(get_next_free(pointer)); // Address of the next block
     size_t *prev = get(get_prev_free(pointer)); // Address of the previous block
 
-    if (next != NULL) {
+    if (next != NULL)
+    {
         put(next + 2 * WSIZE, prev);
     }
 
     // Doesn't actually matter if the next is null or not for this particular
-    // case, but we need need to know what to overwrite 
+    // case, but we need need to know what to overwrite
     put(prev + WSIZE * (prev > lookup_table + CLASS_OVERHEAD), next);
-
 
     // Zero out the next and previous pointers
     put(header + WSIZE, pack(0, 0));
@@ -345,18 +339,17 @@ static inline void add_free_block(int class, void *pointer)
 {
     // We use two word sizes to
     size_t current_size = get_size(pointer);
-    
+
     void *lookup_row = get_lookup_row(class);
     size_t *current = get(lookup_row);
 
     // This is essentially sorting the list in terms of address.
     // Not quite sure why this is all that good at current time,
     // but it will have to do.
-    while (current != NULL && current < get_next_free(current)) {
-
+    while (current != NULL && current < get_next_free(current))
+    {
     }
 
-    
     // Get header or footer data
     // Calculate size class
     // Search for place in the appropriate array to find it
@@ -483,6 +476,21 @@ void *mm_malloc(size_t size)
  */
 void mm_free(void *ptr)
 {
+
+    if(ptr == NULL)
+    {
+        return;
+    }
+
+    size_t size = get_size(header_pointer(ptr));
+    size_t size_class = get_class(size);
+
+    put(header_pointer(ptr), pack(size, 0));
+    put(footer_pointer(ptr), pack(size, 0));
+
+    add_free_block(size_class, ptr);
+
+    return;
 }
 
 /*
@@ -490,10 +498,10 @@ void mm_free(void *ptr)
  */
 void *mm_realloc(void *ptr, size_t size)
 {
-    if (ptr == NULL && size > 0) {
+    if (ptr == NULL && size > 0)
+    {
         return mm_malloc(size);
     }
-
 }
 
 static void *extend_heap(size_t words)
@@ -501,7 +509,7 @@ static void *extend_heap(size_t words)
     // Extended words (even for double word boundary alignment)
     size_t extended_words = (words % 2 == 0) ? words : words + 1;
 
-    if ((size_t) mem_sbrk(extended_words) == -1)
+    if ((size_t)mem_sbrk(extended_words) == -1)
     {
         return NULL;
     }
