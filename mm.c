@@ -251,16 +251,13 @@ METHODS
  */
 static inline int get_class(size_t size)
 {
-    size = size | (size >> 1);
-    size = size | (size >> 2);
-    size = size | (size >> 4);
-    size = size | (size >> 8);
-    size = size | (size >> 16);
-    // If within a predefined class size, return that size, otherwise return the
-    // largest
+    for (int i = 0; i < CLASSES; i++) {
+        if (size < (1 << (4+i))) {
+            return i - 1;
+        }
+    }
 
-    return (size - (size >> 1) + 1);
-    // return (size - (size >> 1) + 1) % CLASSES ? (size - (size >> 1) + 1) : CLASSES - 1;
+    return CLASSES - 1;
 }
 
 /* 
@@ -550,7 +547,23 @@ void *mm_malloc(size_t size)
  */
 void mm_free(void *ptr)
 {
+    if (ptr == NULL) {
+        return;
+    }
     
+    // Get size class and size of the block
+    size_t size = get_size(header_pointer(ptr));
+    size_t size_class = size_class(size);
+
+    // Change allocation status in the header and footer pointers
+    put(header_pointer(ptr), pack(size, 0));
+    put(footer_pointer(ptr), pack(size, 0));
+
+    // Add the free block to size class linked list
+    add_free_block(size_class, ptr);
+
+    return;
+
 }
 
 /*
