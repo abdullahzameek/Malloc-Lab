@@ -487,7 +487,10 @@ void mm_free(void *ptr)
  */
 void *mm_realloc(void *ptr, size_t size)
 {
-    return NULL;
+    if (ptr == NULL && size > 0) {
+        return mm_malloc(size);
+    }
+
 }
 
 static void *extend_heap(size_t words)
