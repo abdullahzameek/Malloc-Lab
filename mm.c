@@ -88,7 +88,7 @@ team_t team = {
 #define WSIZE sizeof(void *)
 
 // System page size
-#define CHUNKSIZE (1L << 12) 
+#define CHUNKSIZE (1L << 12)
 
 // The minimum possible free chunk size. If we add this restriction, then
 // there should be no problems with allocation in the lower size classes.
@@ -109,6 +109,9 @@ team_t team = {
 // offsets.
 #define CLASS_OVERHEAD ((CLASSES) * (WSIZE))
 
+// Useful several times down the line when evaluating allocation sizes
+#define MAX(a, b) (((a) > (b)) ? (a) : (b))
+
 // The pointers to the locations in memory we will be using
 // for reference for the rest of the file
 static size_t *heap_list = NULL;
@@ -124,8 +127,8 @@ static inline void put(void *pointer, size_t value);
 static inline size_t pack(size_t size, size_t alloc);
 static inline size_t get_size(void *pointer);
 static inline size_t get_alloc(void *pointer);
-static inline void *header_pointer(void *bp);
-static inline void *footer_pointer(void *bp);
+static inline size_t *header_pointer(void *bp);
+static inline size_t *footer_pointer(void *bp);
 static inline void *next_block_ptr(void *bp);
 static inline void *prev_block_ptr(void *bp);
 
@@ -140,9 +143,8 @@ static inline size_t *get_next_free(void *base);
 static inline size_t *get_prev_free(void *base);
 static void *extend_heap(size_t words);
 static void *coalesce(void *bp);
+static void split_block(void *ptr, size_t newsize);
 static int mm_checkheap();
-static void check_block(void *bp);
-static void best_fit(size_t size);
 
 /* 
 
@@ -205,34 +207,33 @@ static inline size_t get_alloc(void *pointer)
 // Casting to char pointer occurs due to need for pointer arithmetic, due to the
 // size of the char, which is 1 byte. This means that any offset will be taken
 // at face value. bp stands for base pointer, and it's actually the pointer
-// that would be returned by malloc. So to align with
+// that would be returned by malloc.
 
-// TODO Probably better to cast the pointer to a size_t, and then cast it back to a pointer
-// Get the pointer to the base of the header of the allocated block
-// TODO Cast to integers
-static inline void *header_pointer(void *bp)
+// This should work, given a normal pointer
+static inline size_t *header_pointer(void *bp)
 {
-    return (void *)((size_t)bp) - WSIZE;
+    return (size_t *)(((size_t)bp) - WSIZE);
 }
 
-// Don't understand why we have 2 * WSIZE. Need to figure out if that works or not
-static inline void *footer_pointer(void *bp)
+static inline size_t *footer_pointer(void *bp)
 {
-    return (void *)((size_t)bp) + get_size((void *)((size_t)header_pointer(bp) - 2 * WSIZE));
+    return (size_t *)(((size_t)bp) + get_size((void *)header_pointer(bp)));
 }
 
-// Get a pointer to the next block, given a pointer to an allocated one
-// Useful for coalescing
+// Get a pointer to base of the next block, given a pointer to an allocated one
 static inline void *next_block_ptr(void *bp)
 {
-    return (void *)((size_t *)bp) + get_size((size_t *)bp - WSIZE);
+    return (void *)(((size_t)footer_pointer(bp)) + 2 * WSIZE);
 }
 
 // Get a pointer to the previous block, given a pointer to an allocated one.
 // Assumes contiguity in memory
 static inline void *prev_block_ptr(void *bp)
 {
-    return (void *)((size_t *)bp) - get_size(((size_t *)bp) - 2 * WSIZE);
+    // Note that this is calculated from the PAYLOAD, not the base
+    // of the chunk, and all of the manipulations take that into
+    // account
+    return (void *)(((size_t)bp) - get_size((void *)(((size_t)bp) - 2 * WSIZE)) - 2 * WSIZE);
 }
 
 /* 
@@ -310,9 +311,6 @@ static inline void remove_free_block(void *pointer)
     void *footer = footer_pointer(pointer);
 
     size_t block_size = get_size(header);
-    // Set the header and footer status to allocated
-    put(header, pack(block_size, 1));
-    put(footer, pack(block_size, 1));
 
     // Get the previous and blocks in the array - we need
     // some special logic for the previous one to make sure
@@ -320,14 +318,14 @@ static inline void remove_free_block(void *pointer)
     size_t *next = get(get_next_free(pointer)); // Address of the next block
     size_t *prev = get(get_prev_free(pointer)); // Address of the previous block
 
-    if (next != NULL) {
+    if (next != NULL)
+    {
         put(next + 2 * WSIZE, prev);
     }
 
     // Doesn't actually matter if the next is null or not for this particular
-    // case, but we need need to know what to overwrite 
+    // case, but we need need to know what to overwrite
     put(prev + WSIZE * (prev > lookup_table + CLASS_OVERHEAD), next);
-
 
     // Zero out the next and previous pointers
     put(header + WSIZE, pack(0, 0));
@@ -339,24 +337,49 @@ static inline void remove_free_block(void *pointer)
  * from previous header and footer data, then do a linear 
  * search for where it should be added, with address ordering.
  * 
- * To add the free 
+ * To add the free blocks, there are 4 possible cases. 
+ * 
+ * 1) The new free block is the first element after the sentinel node i.e the lookup table itself.
+ * 2) The new free block has to be inserted in between the sentinel and another free block
+ * 3) The new free block has to be inserted in between two existing nodes 
+ * 4) The new free block has to be inserted at the end of the free list
+ *
  */
+
 static inline void add_free_block(int class, void *pointer)
 {
     // We use two word sizes to
     size_t current_size = get_size(pointer);
-    
     void *lookup_row = get_lookup_row(class);
     size_t *current = get(lookup_row);
 
+    size_t *prevNode;
+    size_t *nextNode;
+
+ 
     // This is essentially sorting the list in terms of address.
     // Not quite sure why this is all that good at current time,
     // but it will have to do.
-    while (current != NULL && current < get_next_free(current)) {
-
+    while (current != NULL && current < get_next_free(current))
+    {
+        current = get(get_next_free(current));
     }
 
-    
+    if (current == NULL)
+    {
+        put((void *)lookup_row, pointer);
+    }
+    else
+    {
+        nextNode = get(get_next_free(current));
+        prevNode = current;
+
+        put((void *)prevNode, pointer);
+        put((void *)nextNode, pointer);
+    }
+
+    return;
+
     // Get header or footer data
     // Calculate size class
     // Search for place in the appropriate array to find it
@@ -412,8 +435,36 @@ END OF DOUBLE LINKED LIST MANIPULATION METHODS
 // - each segregated list contains only blocks in the appropriate size class
 static int mm_checkheap()
 {
+    void *iterator = lookup_table;
+    void *heap_top = mem_heap_hi();
 
-    return 0;
+    while (iterator < heap_top)
+    {
+        if (iterator < lookup_table + CLASS_OVERHEAD)
+        {
+            printf("Lookup table %x has the value %d\n", iterator, get(iterator));
+            iterator = (void *)((size_t)iterator + WSIZE);
+        }
+        else
+        {
+            size_t *header = (size_t *)get(iterator);
+            // This is allocated
+            if (get_alloc(header))
+            {
+                // 1. Are the footer and header the same?
+                if (get_size(header) != get_size(header + get_size(header) + WSIZE))
+                {
+                    printf("Heap block %x has a header/footer mismatch!", iterator);
+                }
+
+                // Checks block alignment
+                if (get_size(header) != align_to_word(get_size(header)))
+                {
+                    printf("Heap block %x has an unaligned payload", iterator);
+                }
+            }
+        }
+    }
 }
 
 /* 
@@ -421,6 +472,7 @@ static int mm_checkheap()
  */
 int mm_init(void)
 {
+    void *top;
     // Experimentally, there is no need to pad to align this to boundary aligned size.
     // Since each block will be sourrounded by a header and a footer, we only need
     // to align the payload, and not the headers and class sizes themselves.
@@ -446,11 +498,15 @@ int mm_init(void)
     // make sure that all is well
     lookup_table += WSIZE;
 
-    // Extends the heap by a quasi-arbitrary initial amount
-    if (extend_heap(CHUNKSIZE / WSIZE) == NULL)
+    // Initially extend the heap by a page
+    if ((top = extend_heap(CHUNKSIZE / WSIZE)) == NULL)
     {
         return -1;
     }
+
+    // Add the page to the free list
+    size_t initial_sc = get_class(CHUNKSIZE / WSIZE);
+    add_free_block(initial_sc, top);
 
     // Initiation was successful
     return 0;
@@ -464,18 +520,29 @@ void *mm_malloc(size_t size)
 {
     size_t aligned_size = align_to_word(size + 2 * WSIZE);
     size_t sc = get_class(aligned_size);
-    size_t extend_heap;
+    void *final;
 
     // Ignore if current
-    if (size == 0)
-    {
+    if (size <= 0)
         return NULL;
+
+    // Ensures that we never get a block smaller than a certain size, which
+    // would be problematic when freeing
+    aligned_size = MAX(aligned_size, MINCHUNK);
+
+    // If we don't get the free block, then just extend it, otherwise we're fine
+    // Could potentially do it so that we allocate a lot more at once, and add
+    // additional data to the free list, but that doesn't seem good
+    if ((final = get_free_block(sc, aligned_size)) == NULL)
+    {
+        final = extend_heap(aligned_size / WSIZE);
     }
 
-    if (get_free_block(sc, aligned_size) == NULL)
-    {
-        // Here we need to extend the heap
-    }
+    put(final, pack(aligned_size - 2 * WSIZE, 1));
+    put(final + aligned_size - WSIZE, pack(aligned_size - 2 * WSIZE, 1));
+
+    final += WSIZE;
+    return final;
 }
 
 /*
@@ -490,28 +557,88 @@ void mm_free(void *ptr)
  */
 void *mm_realloc(void *ptr, size_t size)
 {
-    return NULL;
+    // If pointer is zero, pretend to be malloc
+    if (ptr == NULL && size > 0)
+    {
+        return mm_malloc(size);
+    }
+
+    // If size is zero, and pointer isn't, pretend to be free
+    if (ptr != NULL && size == 0)
+    {
+        mm_free(ptr);
+        return NULL;
+    }
+
+    // Resize pointer
+    if (ptr != NULL && size > 0)
+    {
+        size_t block_size = get_size(get(ptr));
+
+        if (block_size < size)
+        {
+            // This is what we need to work on quite extensively
+        }
+        else if (block_size > size)
+        {
+            // Split it
+        }
+        else if (block_size == size)
+        {
+            return ptr; // Nothing needs to be done if we're resizing
+        }
+    }
 }
 
 static void *extend_heap(size_t words)
 {
+    void *final;
     // Extended words (even for double word boundary alignment)
     size_t extended_words = (words % 2 == 0) ? words : words + 1;
 
-    if ((size_t) mem_sbrk(extended_words) == -1)
+    if ((final = mem_sbrk(extended_words)) == -1)
     {
         return NULL;
     }
 
-    // Do we need to go
+    return final;
 }
 
 static void *coalesce(void *bp)
 {
-    // Case 1: prev and next allocated -> do nothing
-    // Case 2: prev allocated, next free -> coalesce with next
-    // Case 3: prev free, next allocated -> coalesce with previous
-    // Case 4: prev free, next free -> coalesce with both
+    if (bp == NULL)
+    {
+        return;
+    }
+
+    size_t size = get_size(get(bp));
+    // Since these return pointers to the base of the payload, they
+    // need to be shifted back to the header for reads and writes
+    size_t *next = header_pointer(bp);
+    size_t *prev = header_pointer(bp);
+
+    // Without loss of generality, we will not be coalescing more than
+    // three blocks at a time, due to the overheads incurred in seeking
+    if (get_alloc(next) && get_alloc(prev))
+    {
+        // Case 1: prev and next allocated -> do nothing
+        return;
+    }
+    else if (!get_alloc(next) && get_alloc(prev))
+    {
+        // Case 2: prev free, next allocated -> coalesce with previous
+    }
+    else if (get_alloc(next) && !get_alloc(prev))
+    {
+        // Case 3: prev allocated, next free -> coalesce with next
+    }
+    else if (!get_alloc(next) && !get_alloc(prev))
+    {
+        // Case 4: prev free, next free -> coalesce with both
+    }
+
     // Calculate size class
     // Add to appropriate size class
+    // NB For every free block, we need to remove it from the array
+    // and we need to make sure we know how large it is beforehand
 }
