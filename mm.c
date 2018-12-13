@@ -550,6 +550,7 @@ void *mm_malloc(size_t size)
  */
 void mm_free(void *ptr)
 {
+    
 }
 
 /*
@@ -586,7 +587,7 @@ void *mm_realloc(void *ptr, size_t size)
         else if (block_size == size)
         {
             return ptr; // Nothing needs to be done if we're resizing
-        }
+        }//scanf
     }
 }
 
