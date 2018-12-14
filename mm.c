@@ -144,6 +144,7 @@ static inline size_t *get_prev_free(void *base);
 static void *extend_heap(size_t words);
 static void *coalesce(void *bp);
 static void split_block(void *ptr, size_t newsize);
+static inline size_t *shift(size_t *pointer, size_t shft);
 static int mm_checkheap();
 
 /* 
@@ -254,8 +255,10 @@ METHODS
  */
 static inline int get_class(size_t size)
 {
-    for (int i = 0; i < CLASSES; i++) {
-        if (size < (1 << (4+i))) {
+    for (int i = 0; i < CLASSES; i++)
+    {
+        if (size < (1 << (4 + i)))
+        {
             return i - 1;
         }
     }
@@ -356,7 +359,6 @@ static inline void add_free_block(int class, void *pointer)
     size_t *prevNode;
     size_t *nextNode;
 
- 
     // This is essentially sorting the list in terms of address.
     // Not quite sure why this is all that good at current time,
     // but it will have to do.
@@ -374,17 +376,17 @@ static inline void add_free_block(int class, void *pointer)
         nextNode = get(get_next_free(current));
         prevNode = current;
 
-        put((void *)prevNode, pointer);
-        put((void *)nextNode, pointer);
+        // Set the previous ptr of the next block
+        put(shift(nextNode, 2 * WSIZE), pointer);
+        // Set the next ptr of the previous block
+        put(shift(prevNode, WSIZE), pointer);
     }
 
-    return;
+    // Set the current and next pointers
+    put(shift(pointer, WSIZE), nextNode);
+    put(shift(pointer, 2 * WSIZE), prevNode);
 
-    // Get header or footer data
-    // Calculate size class
-    // Search for place in the appropriate array to find it
-    // Set the pointers of the next + previous to the right
-    // ones
+    return;
 }
 
 /* 
@@ -397,7 +399,7 @@ static inline void *get_lookup_row(int class)
     {
         return NULL;
     }
-    return (void *)( ((size_t) lookup_table) + class * WSIZE);
+    return (void *)(((size_t)lookup_table) + class * WSIZE);
 }
 
 /* 
@@ -407,7 +409,7 @@ static inline void *get_lookup_row(int class)
  */
 static inline size_t *get_next_free(void *base)
 {
-    return (size_t *)((*(size_t *)base) + WSIZE);
+    return shift(base, WSIZE);
 }
 
 /* 
@@ -416,7 +418,13 @@ static inline size_t *get_next_free(void *base)
  */
 static inline size_t *get_prev_free(void *base)
 {
-    return (size_t *)((*(size_t *)base) + 2 * WSIZE);
+    return shift(base, 2 * WSIZE);
+}
+
+// Helps us do a lot of pointer manipulation
+static inline size_t *shift(size_t *pointer, size_t shft)
+{
+    return (size_t *)(((size_t) pointer) + shft);
 }
 
 /* 
@@ -511,7 +519,6 @@ int mm_init(void)
     put(top, pack(CHUNKSIZE, 0));
     put(top + CHUNKSIZE, pack(CHUNKSIZE, 0));
 
-    
     add_free_block(initial_sc, top);
 
     // Initiation was successful
@@ -545,7 +552,7 @@ void *mm_malloc(size_t size)
     }
 
     put(final, pack(aligned_size - 2 * WSIZE, 1));
-    put(final + aligned_size - WSIZE, pack(aligned_size - 2 * WSIZE, 1));
+    put(final + aligned_size, pack(aligned_size - 2 * WSIZE, 1));
 
     final += WSIZE;
     return final;
@@ -556,13 +563,14 @@ void *mm_malloc(size_t size)
  */
 void mm_free(void *ptr)
 {
-    if (ptr == NULL) {
+    if (ptr == NULL)
+    {
         return;
     }
-    
+
     // Get size class and size of the block
     size_t size = get_size(header_pointer(ptr));
-    size_t size_class = get_class(size); //the function should be get_class() right? It read size_class() 
+    size_t size_class = get_class(size); //the function should be get_class() right? It read size_class()
 
     // Change allocation status in the header and footer pointers
     put(header_pointer(ptr), pack(size, 0));
@@ -572,7 +580,6 @@ void mm_free(void *ptr)
     add_free_block(size_class, ptr);
 
     return;
-
 }
 
 /*
@@ -609,7 +616,7 @@ void *mm_realloc(void *ptr, size_t size)
         else if (block_size == size)
         {
             return ptr; // Nothing needs to be done if we're resizing
-        }//scanf
+        }               //scanf
     }
 }
 
