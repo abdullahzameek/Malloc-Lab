@@ -570,7 +570,8 @@ void mm_free(void *ptr)
 
     // Add the free block to size class linked list
     add_free_block(size_class, ptr);
-
+    coalesce(ptr);
+    
     return;
 
 }
@@ -634,7 +635,7 @@ static void *coalesce(void *bp)
         return;
     }
 
-    size_t size = get_size(get(bp));
+    size_t size = get_size(header_pointer(bp));
     // Since these return pointers to the base of the payload, they
     // need to be shifted back to the header for reads and writes
     size_t *next = header_pointer(bp);
@@ -650,14 +651,32 @@ static void *coalesce(void *bp)
     else if (!get_alloc(next) && get_alloc(prev))
     {
         // Case 2: prev free, next allocated -> coalesce with previous
+        size += get_size(header_pointer(next));
+        remove_free_block(next);
+        put(header_pointer(bp), pack(size,0));
+        put(footer_pointer(bp), pack(size,0));
+
+
     }
     else if (get_alloc(next) && !get_alloc(prev))
     {
         // Case 3: prev allocated, next free -> coalesce with next
+        size += get_size(header_pointer(prev));
+        remove_free_block(prev);
+        put(footer_pointer(bp), pack(size,0));
+        put(header_pointer(prev), pack(size,0));
+        bp = prev;
+
     }
     else if (!get_alloc(next) && !get_alloc(prev))
     {
         // Case 4: prev free, next free -> coalesce with both
+        size += get_size(header_pointer(prev)) + get_size(header_pointer(next));
+        remove_free_block(prev);
+        remove_free_block(next);
+        put(header_pointer(prev), pack(size,0));
+        put(footer_pointer(next), pack(size,0));
+        bp  = prev;    
     }
 
     // Calculate size class
