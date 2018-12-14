@@ -303,6 +303,10 @@ static inline void *get_free_block(int class, size_t size)
         }
 
         current = *get_next_free(current);
+        if (valid_heap_address(current)) {
+            current = NULL;
+        }
+
     }
 
     return NULL;
@@ -318,6 +322,15 @@ static inline void remove_free_block(void *pointer)
     // Assume malloc space - pointer to base of payload
     size_t *next = (size_t *)header_pointer(get_next_free(pointer));
     size_t *prev = (size_t *)header_pointer(get_prev_free(pointer));
+ 
+    if (!valid_heap_address(next)) {
+        next = NULL;
+    }
+    if (!valid_heap_address(prev)) {
+        prev = NULL;
+    }
+
+
 
     // While there are four possible combinations of null and not null
     // values for `next` and `prev`, only three of them can occur, since
@@ -382,20 +395,32 @@ static inline void add_free_block(int class, void *pointer)
     // and taken as a
     while (current != NULL && current > lookup_table)
     {
+        if (!valid_heap_address(get(get_next_free(current)))) {
+            break;
+        }
+        
         current = get(get_next_free(current));
+        
     }
 
     size_t *nextNode = get(get_next_free(current));
+    if (!valid_heap_address(nextNode)) {
+        nextNode = NULL;
+    }
+
+    // We're assuming that the previous is always valid
     size_t *prevNode = current;
 
     // Set the previous ptr of the next block
-    put(shift(nextNode, 2 * WSIZE), pointer);
+    if (nextNode != NULL) {
+        put(shift(nextNode, 2 * WSIZE), pointer);
+    }
+
     // Set the next ptr of the previous block
     put(shift(prevNode, WSIZE), pointer);
 
     // Set the prev and next pointers
     put(shift(pointer, WSIZE), nextNode);
-
     put(shift(pointer, 2 * WSIZE), prevNode);
 
     return;
@@ -515,8 +540,6 @@ int mm_init(void)
     put(top + CHUNKSIZE, pack(CHUNKSIZE, 0));
 
     add_free_block(sc, top);
-
-    mm_checkheap();
 
     // Initiation was successful
     return 0;
