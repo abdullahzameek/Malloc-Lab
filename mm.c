@@ -310,22 +310,24 @@ static inline void *get_free_block(int class, size_t size)
 static inline void remove_free_block(void *pointer)
 {
     // Assume malloc space - pointer to base of payload
-    // Getting header and footer.
-    // void *header = header_pointer(pointer);
-    // void *footer = footer_pointer(pointer);
+    size_t *next = (size_t *) header_pointer(get_next_free(pointer));
+    size_t *prev = (size_t *) header_pointer(get_prev_free(pointer));
 
-    size_t *next = get(get_next_free(pointer));
-    size_t *prev = get(get_prev_free(pointer));
-
+    // While there are four possible combinations of null and not null
+    // values for `next` and `prev`, only three of them can occur, since
+    // previous has to point either to the lookup table
     if (next != NULL)
     {
         put(shift(next, 2 * WSIZE), prev);
     }
-    
+
     // Need to check if in lookup table
-    if (prev < ((size_t) lookup_table) + CLASS_OVERHEAD) {
+    if (prev < shift(lookup_table, CLASS_OVERHEAD))
+    {
         put(prev, next);
-    } else {
+    }
+    else
+    {
         put(shift(prev, WSIZE), next);
     }
 
@@ -364,7 +366,7 @@ static inline void add_free_block(int class, void *pointer)
         return;
     }
 
-    // If the lookup table is not empty, there must be at least 
+    // If the lookup table is not empty, there must be at least
     // one element it points to, hence we need to go over the list
     // and figure out where the entry fits address-wise.
 
@@ -383,7 +385,6 @@ static inline void add_free_block(int class, void *pointer)
     put(shift(nextNode, 2 * WSIZE), pointer);
     // Set the next ptr of the previous block
     put(shift(prevNode, WSIZE), pointer);
-    
 
     // Set the current and next pointers
     put(shift(pointer, WSIZE), nextNode);
@@ -503,13 +504,13 @@ int mm_init(void)
     heap_list = shift(lookup_table, CLASS_OVERHEAD);
 
     // Allocate the footer of the prologue and the header of the epilogue
-    put(shift(heap_list, (0 * WSIZE)), 0); 
+    put(shift(heap_list, (0 * WSIZE)), 0);
     put(shift(heap_list, (1 * WSIZE)), pack(2 * WSIZE, 1)); // Prologue footer
-    put(shift(heap_list, (3 * WSIZE)), pack(0, 1));     // Epilogue header
+    put(shift(heap_list, (3 * WSIZE)), pack(0, 1));         // Epilogue header
 
     // The heap will be growing from between the prologue and the epilogue, so that we could
     // make sure that all is well
-    heap_list = shift(heap_list,2 * WSIZE);
+    heap_list = shift(heap_list, 2 * WSIZE);
 
     size_t aligned_page = align_to_word(CHUNKSIZE + 2 * WSIZE);
 
@@ -581,9 +582,7 @@ void mm_free(void *ptr)
     put(footer_pointer(ptr), pack(size, 0));
 
     // Add the free block to size class linked list
-    coalesce(ptr);
-
-    return;
+    return coalesce(ptr);
 }
 
 /*
@@ -639,6 +638,7 @@ static void *extend_heap(size_t bytes)
 
 static void *coalesce(void *bp)
 {
+    // Simple check to see if
     if (bp == NULL)
     {
         return;
@@ -647,15 +647,23 @@ static void *coalesce(void *bp)
     size_t size = get_size(header_pointer(bp));
     // Since these return pointers to the base of the payload, they
     // need to be shifted back to the header for reads and writes
-
-    // Still in userspace
     size_t *next = next_block_ptr(bp);
     size_t *prev = prev_block_ptr(bp);
 
-    if (next == NULL || prev == NULL) {
+    // Checking if either of the conditions is NULL, and barring that, checking if there is any undefined
+    // behavior. For that reason, we can't assume that there is in fact a previous or a next, so
+    // those pointers effectively become useless. Need some sort of way of handling that
+
+    // There's no next, then coalescing can happen to the left only
+    if (next == NULL || next > mem_heap_hi())
+    {
         return;
     }
 
+    // There's no previous entry, then coalescing happens to the right only
+    if (prev == NULL || prev < shift(lookup_table, CLASS_OVERHEAD))
+    {
+    }
 
     // Without loss of generality, we will not be coalescing more than
     // three blocks at a time, due to the overheads incurred in seeking
@@ -691,4 +699,7 @@ static void *coalesce(void *bp)
         put(footer_pointer(next), pack(size, 0));
         bp = prev;
     }
+
+    int sc = get_class(size);
+    add_free_block(sc, bp);
 }
