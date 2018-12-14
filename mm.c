@@ -348,14 +348,18 @@ static inline void add_free_block(int class, void *pointer)
     void *lookup_row = get_lookup_row(class);
     size_t *current = get(lookup_row);
 
-
+    // If lookup table is empty
     if (current == NULL)
     {
         put((void *)lookup_row, pointer);
+        put(shift(pointer, WSIZE), 0);
+        put(shift(pointer, 2 * WSIZE), 0);
+        return;
     }
 
-    size_t *prevNode;
-    size_t *nextNode;
+    // If the lookup table is not empty, there must be at least 
+    // one element it points to, hence we need to go over the list
+    // and figure out where the entry fits address-wise.
 
     // This is essentially sorting the list in terms of address.
     // Not quite sure why this is all that good at current time,
@@ -365,8 +369,8 @@ static inline void add_free_block(int class, void *pointer)
         current = get(get_next_free(current));
     }
 
-    nextNode = get(get_next_free(current));
-    prevNode = current;
+    size_t *nextNode = get(get_next_free(current));
+    size_t *prevNode = current;
 
     // Set the previous ptr of the next block
     put(shift(nextNode, 2 * WSIZE), pointer);
