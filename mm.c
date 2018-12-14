@@ -487,7 +487,7 @@ int mm_init(void)
     // Experimentally, there is no need to pad to align this to boundary aligned size.
     // Since each block will be sourrounded by a header and a footer, we only need
     // to align the payload, and not the headers and class sizes themselves.
-    if ((lookup_table = extend_heap(CLASSES)) == NULL)
+    if ((lookup_table = extend_heap(CLASSES + 2)) == NULL)
     {
         return -1;
     }
@@ -503,14 +503,12 @@ int mm_init(void)
     heap_list = shift(lookup_table, CLASS_OVERHEAD);
 
     // Allocate the footer of the prologue and the header of the epilogue
-    put(shift(heap_list, (0 * WSIZE)), 0);
-    put(shift(heap_list, (1 * WSIZE)), pack(2 * WSIZE, 1)); // Prologue footer
-    put(shift(heap_list, (2 * WSIZE)), pack(2 * WSIZE, 1));     // Epilogue header
+    put(shift(heap_list, (0 * WSIZE)), pack(2 * WSIZE, 1)); // Prologue footer
+    put(shift(heap_list, (1 * WSIZE)), pack(0, 1));     // Epilogue header
     // The heap will be growing from between the prologue and the epilogue, so that we could
     // make sure that all is well
-    heap_list = shift(heap_list, 2 * WSIZE);
+    heap_list = shift(heap_list, WSIZE);
 
-    // Initially extend the heap by a page
     if ((top = extend_heap((CHUNKSIZE / WSIZE) + 2)) == NULL)
     {
         return -1;
@@ -628,7 +626,7 @@ static void *extend_heap(size_t words)
     // Extended words (even for double word boundary alignment)
     size_t extended_words = (words % 2 == 0) ? words : words + 1;
 
-    if ((final = mem_sbrk(extended_words)) == -1)
+    if ((final = mem_sbrk(extended_words * WSIZE)) == -1)
     {
         return NULL;
     }
