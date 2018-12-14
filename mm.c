@@ -101,8 +101,6 @@ team_t team = {
 // Should be increase this?
 #define CLASSES 14
 
-#define VOID (size_t *)0
-
 // Overhead from initializing a lookup table in memory, not taking
 // into account the header and the footer size, each of which
 // should be another word. This only needs to be used when calculating
@@ -199,10 +197,6 @@ static inline size_t get_alloc(void *pointer)
 {
     return get(pointer) & (size_t)0x1;
 }
-
-// These might not be fully converted, though they seem fine
-#define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp)-WSIZE)))
-#define PREV_BLKP(bp) ((char *)(bp)-GET_SIZE(((char *)(bp)-DSIZE)))
 
 // Casting to char pointer occurs due to need for pointer arithmetic, due to the
 // size of the char, which is 1 byte. This means that any offset will be taken
@@ -302,36 +296,35 @@ static inline void *get_free_block(int class, size_t size)
 }
 
 /* 
- * remove_free_block - given a size class and a pointer to the block
+ * remove_free_block - given a size class and a pointer to the base of the block
  * that is being removed, it links the previous and successive
  * elements, removing it from the list.
  */
 static inline void remove_free_block(void *pointer)
 {
+    // Assume malloc space - pointer to base of payload
     // Getting header and footer.
-    void *header = header_pointer(pointer);
-    void *footer = footer_pointer(pointer);
+    // void *header = header_pointer(pointer);
+    // void *footer = footer_pointer(pointer);
 
-    size_t block_size = get_size(header);
-
-    // Get the previous and blocks in the array - we need
-    // some special logic for the previous one to make sure
-    // not to overwrite anything in the lookup table
-    size_t *next = get(get_next_free(pointer)); // Address of the next block
-    size_t *prev = get(get_prev_free(pointer)); // Address of the previous block
+    size_t *next = get(get_next_free(pointer));
+    size_t *prev = get(get_prev_free(pointer));
 
     if (next != NULL)
     {
-        put(next + 2 * WSIZE, prev);
+        put(shift(next, 2 * WSIZE), prev);
+    }
+    
+    // Need to check if in lookup table
+    if (prev < ((size_t) lookup_table) + CLASS_OVERHEAD) {
+        put(prev, next);
+    } else {
+        put(shift(prev, WSIZE), next);
     }
 
-    // Doesn't actually matter if the next is null or not for this particular
-    // case, but we need need to know what to overwrite
-    put(prev + WSIZE * (prev > lookup_table + CLASS_OVERHEAD), next);
-
-    // Zero out the next and previous pointers
-    put(header + WSIZE, pack(0, 0));
-    put(header + 2 * WSIZE, pack(0, 0));
+    // // Zero out the next and previous pointers
+    put(shift(pointer, WSIZE), pack(0, 0));
+    put(shift(pointer, 2 * WSIZE), pack(0, 0));
 }
 
 /* 
@@ -355,6 +348,12 @@ static inline void add_free_block(int class, void *pointer)
     void *lookup_row = get_lookup_row(class);
     size_t *current = get(lookup_row);
 
+
+    if (current == NULL)
+    {
+        put((void *)lookup_row, pointer);
+    }
+
     size_t *prevNode;
     size_t *nextNode;
 
@@ -366,20 +365,14 @@ static inline void add_free_block(int class, void *pointer)
         current = get(get_next_free(current));
     }
 
-    if (current == NULL)
-    {
-        put((void *)lookup_row, pointer);
-    }
-    else
-    {
-        nextNode = get(get_next_free(current));
-        prevNode = current;
+    nextNode = get(get_next_free(current));
+    prevNode = current;
 
-        // Set the previous ptr of the next block
-        put(shift(nextNode, 2 * WSIZE), pointer);
-        // Set the next ptr of the previous block
-        put(shift(prevNode, WSIZE), pointer);
-    }
+    // Set the previous ptr of the next block
+    put(shift(nextNode, 2 * WSIZE), pointer);
+    // Set the next ptr of the previous block
+    put(shift(prevNode, WSIZE), pointer);
+    
 
     // Set the current and next pointers
     put(shift(pointer, WSIZE), nextNode);
@@ -423,7 +416,7 @@ static inline size_t *get_prev_free(void *base)
 // Helps us do a lot of pointer manipulation
 static inline size_t *shift(size_t *pointer, size_t shft)
 {
-    return (size_t *)(((size_t) pointer) + shft);
+    return (size_t *)(((size_t)pointer) + shft);
 }
 
 /* 
@@ -440,39 +433,39 @@ END OF DOUBLE LINKED LIST MANIPULATION METHODS
 // - no allocated blocks in free lists, all free blocks are in free list
 // - no cycles in free list
 // - each segregated list contains only blocks in the appropriate size class
-static int mm_checkheap()
-{
-    void *iterator = lookup_table;
-    void *heap_top = mem_heap_hi();
+// static int mm_checkheap()
+// {
+//     void *iterator = lookup_table;
+//     void *heap_top = mem_heap_hi();
 
-    while (iterator < heap_top)
-    {
-        if (iterator < lookup_table + CLASS_OVERHEAD)
-        {
-            printf("Lookup table %x has the value %d\n", iterator, get(iterator));
-            iterator = (void *)((size_t)iterator + WSIZE);
-        }
-        else
-        {
-            size_t *header = (size_t *)get(iterator);
-            // This is allocated
-            if (get_alloc(header))
-            {
-                // 1. Are the footer and header the same?
-                if (get_size(header) != get_size(header + get_size(header) + WSIZE))
-                {
-                    printf("Heap block %x has a header/footer mismatch!", iterator);
-                }
+//     while (iterator < heap_top)
+//     {
+//         if (iterator < lookup_table + CLASS_OVERHEAD)
+//         {
+//             printf("Lookup table %x has the value %d\n", iterator, get(iterator));
+//             iterator = (void *)((size_t)iterator + WSIZE);
+//         }
+//         else
+//         {
+//             size_t *header = (size_t *)get(iterator);
+//             // This is allocated
+//             if (get_alloc(header))
+//             {
+//                 // 1. Are the footer and header the same?
+//                 if (get_size(header) != get_size(header + get_size(header) + WSIZE))
+//                 {
+//                     printf("Heap block %x has a header/footer mismatch!", iterator);
+//                 }
 
-                // Checks block alignment
-                if (get_size(header) != align_to_word(get_size(header)))
-                {
-                    printf("Heap block %x has an unaligned payload", iterator);
-                }
-            }
-        }
-    }
-}
+//                 // Checks block alignment
+//                 if (get_size(header) != align_to_word(get_size(header)))
+//                 {
+//                     printf("Heap block %x has an unaligned payload", iterator);
+//                 }
+//             }
+//         }
+//     }
+// }
 
 /* 
  * mm_init - initialize the malloc package.
@@ -574,9 +567,8 @@ void mm_free(void *ptr)
     put(footer_pointer(ptr), pack(size, 0));
 
     // Add the free block to size class linked list
-    add_free_block(size_class, ptr);
     coalesce(ptr);
-    
+
     return;
 }
 
@@ -642,49 +634,43 @@ static void *coalesce(void *bp)
     size_t size = get_size(header_pointer(bp));
     // Since these return pointers to the base of the payload, they
     // need to be shifted back to the header for reads and writes
-    size_t *next = header_pointer(bp);
-    size_t *prev = header_pointer(bp);
+
+    // Still in userspace
+    size_t *next = next_block_ptr(bp);
+    size_t *prev = prev_block_ptr(bp);
 
     // Without loss of generality, we will not be coalescing more than
     // three blocks at a time, due to the overheads incurred in seeking
-    if (get_alloc(next) && get_alloc(prev))
+    if (get_alloc(header_pointer(next)) && get_alloc(header_pointer(prev)))
     {
         // Case 1: prev and next allocated -> do nothing
         return;
     }
-    else if (!get_alloc(next) && get_alloc(prev))
+    else if (!get_alloc(header_pointer(next)) && get_alloc(header_pointer(prev)))
     {
         // Case 2: prev free, next allocated -> coalesce with previous
         size += get_size(header_pointer(next));
         remove_free_block(next);
-        put(header_pointer(bp), pack(size,0));
-        put(footer_pointer(bp), pack(size,0));
-
-
+        put(header_pointer(bp), pack(size, 0));
+        put(footer_pointer(bp), pack(size, 0));
     }
-    else if (get_alloc(next) && !get_alloc(prev))
+    else if (get_alloc(header_pointer(next)) && !get_alloc(header_pointer(prev)))
     {
         // Case 3: prev allocated, next free -> coalesce with next
         size += get_size(header_pointer(prev));
         remove_free_block(prev);
-        put(footer_pointer(bp), pack(size,0));
-        put(header_pointer(prev), pack(size,0));
+        put(footer_pointer(bp), pack(size, 0));
+        put(header_pointer(prev), pack(size, 0));
         bp = prev;
-
     }
-    else if (!get_alloc(next) && !get_alloc(prev))
+    else if (!get_alloc(header_pointer(next)) && !get_alloc(header_pointer(prev)))
     {
         // Case 4: prev free, next free -> coalesce with both
-        size += get_size(header_pointer(prev)) + get_size(header_pointer(next));
+        size = size + get_size(header_pointer(prev)) + get_size(header_pointer(next));
         remove_free_block(prev);
         remove_free_block(next);
-        put(header_pointer(prev), pack(size,0));
-        put(footer_pointer(next), pack(size,0));
-        bp  = prev;    
+        put(header_pointer(prev), pack(size, 0));
+        put(footer_pointer(next), pack(size, 0));
+        bp = prev;
     }
-
-    // Calculate size class
-    // Add to appropriate size class
-    // NB For every free block, we need to remove it from the array
-    // and we need to make sure we know how large it is beforehand
 }
