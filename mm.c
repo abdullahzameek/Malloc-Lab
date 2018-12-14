@@ -146,7 +146,7 @@ static void add_free_block(int class, void *pointer);
 static inline void *get_lookup_row(int class);
 static inline size_t *get_next_free(void *base);
 static inline size_t *get_prev_free(void *base);
-static void *extend_heap(size_t words);
+static void *extend_heap(size_t bytes);
 static void *coalesce(void *bp);
 static void split_block(void *ptr, size_t newsize);
 static inline size_t *shift(size_t *pointer, size_t shft);
@@ -487,7 +487,7 @@ int mm_init(void)
     // Experimentally, there is no need to pad to align this to boundary aligned size.
     // Since each block will be sourrounded by a header and a footer, we only need
     // to align the payload, and not the headers and class sizes themselves.
-    if ((lookup_table = extend_heap(CLASSES + 2)) == NULL)
+    if ((lookup_table = extend_heap((CLASSES + 3) * WSIZE)) == NULL)
     {
         return -1;
     }
@@ -503,13 +503,17 @@ int mm_init(void)
     heap_list = shift(lookup_table, CLASS_OVERHEAD);
 
     // Allocate the footer of the prologue and the header of the epilogue
-    put(shift(heap_list, (0 * WSIZE)), pack(2 * WSIZE, 1)); // Prologue footer
-    put(shift(heap_list, (1 * WSIZE)), pack(0, 1));     // Epilogue header
+    put(shift(heap_list, (0 * WSIZE)), 0); 
+    put(shift(heap_list, (1 * WSIZE)), pack(2 * WSIZE, 1)); // Prologue footer
+    put(shift(heap_list, (3 * WSIZE)), pack(0, 1));     // Epilogue header
+
     // The heap will be growing from between the prologue and the epilogue, so that we could
     // make sure that all is well
-    heap_list = shift(heap_list, WSIZE);
+    heap_list = shift(heap_list,2 * WSIZE);
 
-    if ((top = extend_heap((CHUNKSIZE / WSIZE) + 2)) == NULL)
+    size_t aligned_page = align_to_word(CHUNKSIZE + 2 * WSIZE);
+
+    if ((top = extend_heap(aligned_page)) == NULL)
     {
         return -1;
     }
@@ -548,7 +552,7 @@ void *mm_malloc(size_t size)
     // additional data to the free list, but that doesn't seem good
     if ((final = get_free_block(sc, aligned_size)) == NULL)
     {
-        final = extend_heap(aligned_size / WSIZE);
+        final = extend_heap(aligned_size);
     }
 
     put(final, pack(aligned_size - 2 * WSIZE, 1));
@@ -620,13 +624,12 @@ void *mm_realloc(void *ptr, size_t size)
     }
 }
 
-static void *extend_heap(size_t words)
+static void *extend_heap(size_t bytes)
 {
+    // ASSUME THAT ALIGNED
     void *final;
-    // Extended words (even for double word boundary alignment)
-    size_t extended_words = (words % 2 == 0) ? words : words + 1;
 
-    if ((final = mem_sbrk(extended_words * WSIZE)) == -1)
+    if ((final = mem_sbrk(bytes)) == -1)
     {
         return NULL;
     }
