@@ -33,8 +33,8 @@
  * Overall memory:
  * +--------+
  * |        |
- * |used    |
- * |memory  |
+ * | used   |
+ * | memory |
  * |        |
  * |        |
  * +--------+
@@ -51,12 +51,19 @@
  *  allocated memory
  * used memory - this is where the diagrams above would be 
  *  placed, both free and non-free in (most probably) non-contiguous blocks
- * High level implementation details:
+ *  High level implementation details:
  * -Free memory works as a doubly linked list. How to make it work like one when the allocated size is too small?
  * -There doesn't need to be a way to iterate over the allocated data, merely know what's allocated, and how large it is
  * -The first several words of the heap are a lookup table, which is a static memory overhead, but should be worth it in long run
  * -We use a simple first-fit memory allocation strategy, but should do address ordering for the insertion
- * -
+ * 
+ * VERY IMPORTANT DETAILS TO KEEP IN MIND BECAUSE THEY'RE NOT TRIVIAL AND TOOK US A LONG TIME TO FIGURE OUT:
+ * -there is a distinction between user space pointers and pointers we use internally (henceforth dubbed 'malloc space'):
+ * user space pointers are aligned TO THE START OF THE PAYLOAD, and malloc space pointers are aligned TO THE START OF THE HEADER.
+ * This took us a while to figure out (seems pretty obvious in retrospect) and it effectively means that any pointer that comes
+ * from user space needs to have a transform applied to have it work properly, otherwise resulting in numerous segfaults.
+ * - 
+ * 
  */
 
 #include <assert.h>
@@ -97,7 +104,7 @@ team_t team = {
 
 #define MINCHUNK (4 * WSIZE)
 // The number of size classes was chosen by enumerating the number of
-// size classes: {{1}, {2}, {5-8}, {9-16}, ..., {4097, +oo}}
+// size classes: {{16-31}, {32-63}, ..., {131072, +oo}}
 // Should be increase this?
 #define CLASSES 14
 
@@ -480,7 +487,7 @@ int mm_init(void)
     // Experimentally, there is no need to pad to align this to boundary aligned size.
     // Since each block will be sourrounded by a header and a footer, we only need
     // to align the payload, and not the headers and class sizes themselves.
-    if ((lookup_table = extend_heap(2 + CLASSES)) == NULL)
+    if ((lookup_table = extend_heap(CLASSES)) == NULL)
     {
         return -1;
     }
@@ -493,14 +500,16 @@ int mm_init(void)
     }
 
     // The heap starts directly after the lookup table
-    heap_list = lookup_table + CLASS_OVERHEAD;
+    heap_list = shift(lookup_table, CLASS_OVERHEAD);
 
     // Allocate the footer of the prologue and the header of the epilogue
-    put(heap_list + (0 * WSIZE), pack(WSIZE, 1)); // Prologue footer
-    put(heap_list + (1 * WSIZE), pack(0, 1));     // Epilogue header
+    put(heap_list + (0 * WSIZE), 0);
+    put(heap_list + (1 * WSIZE), pack(2 * WSIZE, 1)); // Prologue footer
+    put(heap_list + (2 * WSIZE), pack(2 * WSIZE, 1));     // Epilogue header
+    put(heap_list + (3 * WSIZE), pack(0, 1));
     // The heap will be growing from between the prologue and the epilogue, so that we could
     // make sure that all is well
-    heap_list += WSIZE;
+    heap_list = shift(heap_list, 2 * WSIZE);
 
     // Initially extend the heap by a page
     if ((top = extend_heap((CHUNKSIZE / WSIZE) + 2)) == NULL)
@@ -509,11 +518,11 @@ int mm_init(void)
     }
 
     // Add the page to the free list
-    size_t initial_sc = get_class(CHUNKSIZE + 2 * WSIZE);
+    size_t sc = get_class(CHUNKSIZE + 2 * WSIZE);
     put(top, pack(CHUNKSIZE, 0));
     put(top + CHUNKSIZE, pack(CHUNKSIZE, 0));
 
-    add_free_block(initial_sc, top);
+    add_free_block(sc, top);
 
     // Initiation was successful
     return 0;
@@ -546,9 +555,9 @@ void *mm_malloc(size_t size)
     }
 
     put(final, pack(aligned_size - 2 * WSIZE, 1));
-    put(final + aligned_size, pack(aligned_size - 2 * WSIZE, 1));
+    put(shift(final, aligned_size), pack(aligned_size - 2 * WSIZE, 1));
 
-    final += WSIZE;
+    final = shift(final, WSIZE);
     return final;
 }
 
