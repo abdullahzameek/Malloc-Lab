@@ -652,6 +652,11 @@ static void *coalesce(void *bp)
     size_t *next = next_block_ptr(bp);
     size_t *prev = prev_block_ptr(bp);
 
+    if (next == NULL || prev == NULL) {
+        return;
+    }
+
+
     // Without loss of generality, we will not be coalescing more than
     // three blocks at a time, due to the overheads incurred in seeking
     if (get_alloc(header_pointer(next)) && get_alloc(header_pointer(prev)))
