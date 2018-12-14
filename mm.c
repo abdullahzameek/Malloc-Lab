@@ -136,6 +136,7 @@ static inline size_t *header_pointer(void *bp);
 static inline size_t *footer_pointer(void *bp);
 static inline void *next_block_ptr(void *bp);
 static inline void *prev_block_ptr(void *bp);
+static inline int valid_heap_address(void *bp);
 
 // Functions to help us manipulate the free memory
 // doubly linked lists
@@ -183,6 +184,11 @@ static inline void put(void *pointer, size_t value)
 {
     (*(size_t *)pointer) = value;
 }
+
+static inline int valid_heap_address(void *bp) {
+    return bp > mem_heap_lo() && bp < mem_heap_hi();
+}
+
 
 /* 
  * pack - combine the chunk size and allocation data
@@ -455,8 +461,9 @@ static int mm_checkheap()
     void *lookup_top = shift(lookup_table, CLASS_OVERHEAD);
     puts("\nStart of consistency check");
 
-    while (iterator < lookup_top) {
-         printf("Lookup table entry 0x%x has the value 0x%x\n", iterator, get(iterator));
+    while (iterator < lookup_top)
+    {
+        printf("Lookup table entry 0x%x has the value 0x%x\n", iterator, get(iterator));
         iterator = shift(iterator, WSIZE);
     }
     puts("End of heap consistency checker");
