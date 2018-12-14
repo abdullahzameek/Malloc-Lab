@@ -310,8 +310,8 @@ static inline void *get_free_block(int class, size_t size)
 static inline void remove_free_block(void *pointer)
 {
     // Assume malloc space - pointer to base of payload
-    size_t *next = (size_t *) header_pointer(get_next_free(pointer));
-    size_t *prev = (size_t *) header_pointer(get_prev_free(pointer));
+    size_t *next = (size_t *)header_pointer(get_next_free(pointer));
+    size_t *prev = (size_t *)header_pointer(get_prev_free(pointer));
 
     // While there are four possible combinations of null and not null
     // values for `next` and `prev`, only three of them can occur, since
@@ -352,7 +352,6 @@ static inline void remove_free_block(void *pointer)
 
 static inline void add_free_block(int class, void *pointer)
 {
-    // We use two word sizes to
     size_t current_size = get_size(pointer);
     void *lookup_row = get_lookup_row(class);
     size_t *current = get(lookup_row);
@@ -372,8 +371,10 @@ static inline void add_free_block(int class, void *pointer)
 
     // This is essentially sorting the list in terms of address.
     // Not quite sure why this is all that good at current time,
-    // but it will have to do.
-    while (current != NULL && current < get_next_free(current))
+    // but it will have to do. Note that this also weeds out false
+    // positives by explicitly checking for garbage being read
+    // and taken as a
+    while (current != NULL && current > lookup_table)
     {
         current = get(get_next_free(current));
     }
@@ -386,8 +387,9 @@ static inline void add_free_block(int class, void *pointer)
     // Set the next ptr of the previous block
     put(shift(prevNode, WSIZE), pointer);
 
-    // Set the current and next pointers
+    // Set the prev and next pointers
     put(shift(pointer, WSIZE), nextNode);
+
     put(shift(pointer, 2 * WSIZE), prevNode);
 
     return;
@@ -436,48 +438,29 @@ static inline size_t *shift(size_t *pointer, size_t shft)
 END OF DOUBLE LINKED LIST MANIPULATION METHODS
 
 */
+/*
+Checks for the following heap invariants:
+- header and footer match
+- payload area is aligned, size is valid
+- no contiguous free blocks unless coalescing is deferred
+- next/prev pointers in consecutive free blocks are consistent
+- no allocated blocks in free lists, all free blocks are in free list
+- no cycles in free list
+- each segregated list contains only blocks in the appropriate size class
+*/
+static int mm_checkheap()
+{
+    void *iterator = lookup_table;
+    void *heap_top = mem_heap_hi();
+    void *lookup_top = shift(lookup_table, CLASS_OVERHEAD);
+    puts("\nStart of consistency check");
 
-// Checks for the following heap invariants:
-// - header and footer match
-// - payload area is aligned, size is valid
-// - no contiguous free blocks unless coalescing is deferred
-// - next/prev pointers in consecutive free blocks are consistent
-// - no allocated blocks in free lists, all free blocks are in free list
-// - no cycles in free list
-// - each segregated list contains only blocks in the appropriate size class
-// static int mm_checkheap()
-// {
-//     void *iterator = lookup_table;
-//     void *heap_top = mem_heap_hi();
-
-//     while (iterator < heap_top)
-//     {
-//         if (iterator < lookup_table + CLASS_OVERHEAD)
-//         {
-//             printf("Lookup table %x has the value %d\n", iterator, get(iterator));
-//             iterator = (void *)((size_t)iterator + WSIZE);
-//         }
-//         else
-//         {
-//             size_t *header = (size_t *)get(iterator);
-//             // This is allocated
-//             if (get_alloc(header))
-//             {
-//                 // 1. Are the footer and header the same?
-//                 if (get_size(header) != get_size(header + get_size(header) + WSIZE))
-//                 {
-//                     printf("Heap block %x has a header/footer mismatch!", iterator);
-//                 }
-
-//                 // Checks block alignment
-//                 if (get_size(header) != align_to_word(get_size(header)))
-//                 {
-//                     printf("Heap block %x has an unaligned payload", iterator);
-//                 }
-//             }
-//         }
-//     }
-// }
+    while (iterator < lookup_top) {
+         printf("Lookup table entry 0x%x has the value 0x%x\n", iterator, get(iterator));
+        iterator = shift(iterator, WSIZE);
+    }
+    puts("End of heap consistency checker");
+}
 
 /* 
  * mm_init - initialize the malloc package.
@@ -525,6 +508,8 @@ int mm_init(void)
     put(top + CHUNKSIZE, pack(CHUNKSIZE, 0));
 
     add_free_block(sc, top);
+
+    mm_checkheap();
 
     // Initiation was successful
     return 0;
@@ -580,6 +565,10 @@ void mm_free(void *ptr)
     // Change allocation status in the header and footer pointers
     put(header_pointer(ptr), pack(size, 0));
     put(footer_pointer(ptr), pack(size, 0));
+
+    // Zero out the chunk, just in case, to make sure that there are no random values floating around
+    // in the heap
+    memset(ptr, 0, size);
 
     // Add the free block to size class linked list
     return coalesce(ptr);

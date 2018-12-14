@@ -1,7 +1,7 @@
 #
 # Students' Makefile for the Malloc Lab
 #
-TEAM = bovik
+TEAM = "Our Lord and Savior, the SegFault"
 VERSION = 1
 HANDINDIR = /afs/cs.cmu.edu/academic/class/15213-f01/malloclab/handin
 
