@@ -84,8 +84,8 @@ team_t team = {
 // We are leaving constants as macros, to make sure the interface
 // to the library remains unchanged, and will be using static inline
 // functions to make sure this remains the way it is.
-#define ALIGNMENT (2 * sizeof(void *))
-#define WSIZE sizeof(void *)
+#define ALIGNMENT 8
+#define WSIZE 4
 
 // System page size
 #define CHUNKSIZE (1L << 12)
