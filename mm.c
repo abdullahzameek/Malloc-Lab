@@ -553,7 +553,7 @@ void mm_free(void *ptr)
     
     // Get size class and size of the block
     size_t size = get_size(header_pointer(ptr));
-    size_t size_class = size_class(size);
+    size_t size_class = get_class(size); //the function should be get_class() right? It read size_class() 
 
     // Change allocation status in the header and footer pointers
     put(header_pointer(ptr), pack(size, 0));
