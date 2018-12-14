@@ -390,7 +390,7 @@ static inline void add_free_block(int class, void *pointer)
  */
 static inline void *get_lookup_row(int class)
 {
-    if (class < 0 || class < CLASSES)
+    if (class < 0 || class > CLASSES)
     {
         return NULL;
     }
