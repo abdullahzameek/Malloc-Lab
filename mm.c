@@ -84,8 +84,8 @@ team_t team = {
 // We are leaving constants as macros, to make sure the interface
 // to the library remains unchanged, and will be using static inline
 // functions to make sure this remains the way it is.
-#define ALIGNMENT (2 * sizeof(void *))
-#define WSIZE sizeof(void *)
+#define ALIGNMENT 8
+#define WSIZE 4
 
 // System page size
 #define CHUNKSIZE (1L << 12)
@@ -245,9 +245,12 @@ METHODS
 
 /* 
  * get_class - returns the size class in which the current chunk
- * would fit. Does so with clever bit manipulation, borrowed from
- * Hacker's Delight (2rd edition), saving us from branching and
- * optimizing precious cycles. 
+ * would fit. This was the easiest way of calculating the required
+ * values, and has been verified experimentally to work on the 
+ * entire range of values that are expected.
+ * 
+ * ASSUMPTION: the min value for size is 16
+ * 
  */
 static inline int get_class(size_t size)
 {
@@ -268,7 +271,7 @@ static inline int get_class(size_t size)
 */
 static inline void *get_free_block(int class, size_t size)
 {
-    if (class < 0 || class < CLASSES)
+    if (class < 0 || class > CLASSES)
     {
         return NULL;
     }
@@ -394,7 +397,7 @@ static inline void *get_lookup_row(int class)
     {
         return NULL;
     }
-    return (void *)(lookup_table + class * WSIZE);
+    return (void *)( ((size_t) lookup_table) + class * WSIZE);
 }
 
 /* 
@@ -502,7 +505,13 @@ int mm_init(void)
     }
 
     // Add the page to the free list
+    // Note that add_free_block DOES NOT actually add the header and footer, so we crash
+    // later down the line
     size_t initial_sc = get_class(CHUNKSIZE / WSIZE);
+    put(top, pack(CHUNKSIZE, 0));
+    put(top + CHUNKSIZE, pack(CHUNKSIZE, 0));
+
+    
     add_free_block(initial_sc, top);
 
     // Initiation was successful
