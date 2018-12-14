@@ -155,12 +155,11 @@ START OF THE GENERAL POINTER MANIPULATION METHODS
 
 /* 
  * align_to_word - given a user-defined size, align it
- * to the next word boundary. Since this means making it even,
- * it will effectively be aligned to a double word boundary as well.
+ * to the next word boundary. Since this means making it even.
  */
 static inline size_t align_to_word(size_t size)
 {
-    return (size + (2 * WSIZE - 1)) & (size_t)~0x7;
+    return (size + (ALIGNMENT - 1)) & (size_t)~0x7;
 }
 
 /* 
@@ -484,7 +483,7 @@ int mm_init(void)
     // Experimentally, there is no need to pad to align this to boundary aligned size.
     // Since each block will be sourrounded by a header and a footer, we only need
     // to align the payload, and not the headers and class sizes themselves.
-    if ((lookup_table = mem_sbrk(4 * WSIZE + CLASS_OVERHEAD)) < 0)
+    if ((lookup_table = extend_heap(2 + CLASSES)) == NULL)
     {
         return -1;
     }
@@ -497,25 +496,23 @@ int mm_init(void)
     }
 
     // The heap starts directly after the lookup table
-    lookup_table = lookup_table + CLASS_OVERHEAD;
+    heap_list = lookup_table + CLASS_OVERHEAD;
 
     // Allocate the footer of the prologue and the header of the epilogue
-    put(lookup_table + (1 * WSIZE), pack(WSIZE, 1)); // Prologue footer
-    put(lookup_table + (2 * WSIZE), pack(0, 1));     // Epilogue header
+    put(heap_list + (0 * WSIZE), pack(WSIZE, 1)); // Prologue footer
+    put(heap_list + (1 * WSIZE), pack(0, 1));     // Epilogue header
     // The heap will be growing from between the prologue and the epilogue, so that we could
     // make sure that all is well
-    lookup_table += WSIZE;
+    heap_list += WSIZE;
 
     // Initially extend the heap by a page
-    if ((top = extend_heap(CHUNKSIZE / WSIZE)) == NULL)
+    if ((top = extend_heap((CHUNKSIZE / WSIZE) + 2)) == NULL)
     {
         return -1;
     }
 
     // Add the page to the free list
-    // Note that add_free_block DOES NOT actually add the header and footer, so we crash
-    // later down the line
-    size_t initial_sc = get_class(CHUNKSIZE / WSIZE);
+    size_t initial_sc = get_class(CHUNKSIZE + 2 * WSIZE);
     put(top, pack(CHUNKSIZE, 0));
     put(top + CHUNKSIZE, pack(CHUNKSIZE, 0));
 
@@ -531,7 +528,7 @@ int mm_init(void)
  */
 void *mm_malloc(size_t size)
 {
-    size_t aligned_size = align_to_word(size + 2 * WSIZE);
+    size_t aligned_size = align_to_word(size) + 2 * WSIZE;
     size_t sc = get_class(aligned_size);
     void *final;
 
