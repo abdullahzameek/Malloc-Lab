@@ -85,7 +85,7 @@
 
 team_t team = {
     /* Team name */
-    "Our Lord and Savior, the SegFault",
+    "QuackerDucky",
     /* First member's full name */
     "Lukas Zapolskas",
     /* First member's email address */
@@ -753,7 +753,7 @@ static void *coalesce(void *bp)
     else if (!get_alloc(header_pointer(next)) && get_alloc(header_pointer(prev)))
     {
         // Case 2: prev free, next allocated -> coalesce with previous
-        size += get_size(header_pointer(next)) + 2 * WSIZE;
+        size += align_to_word(get_size(header_pointer(next)) + 2 * WSIZE);
         remove_free_block(next);
         put(header_pointer(bp), pack(size, 0));
         put(footer_pointer(next), pack(size, 0));
@@ -764,7 +764,7 @@ static void *coalesce(void *bp)
     else if (get_alloc(header_pointer(next)) && !get_alloc(header_pointer(prev)))
     {
         // Case 3: prev allocated, next free -> coalesce with next
-        size += get_size(header_pointer(prev)) + 2 * WSIZE;
+        size += align_to_word(get_size(header_pointer(prev)) + 2 * WSIZE);
         remove_free_block(prev);
         put(header_pointer(prev), pack(size, 0));
         put(footer_pointer(bp), pack(size, 0));
@@ -776,12 +776,13 @@ static void *coalesce(void *bp)
     else if (!get_alloc(header_pointer(next)) && !get_alloc(header_pointer(prev)))
     {
         // Case 4: prev free, next free -> coalesce with both
-        size = size + get_size(header_pointer(prev) + get_size(header_pointer(next))) + 4 * WSIZE;
+        size = align_to_word(size + get_size(header_pointer(prev) + get_size(header_pointer(next))) + 4 * WSIZE);
         remove_free_block(prev);
         remove_free_block(next);
         put(header_pointer(prev), pack(size, 0));
         put(footer_pointer(next), pack(size, 0));
         memset(prev, 0, size);
+        memset(next,0, size); //added next as well because I think it belongs here too? 
         bp = prev;
         add_free_block(get_class(size), bp);
         return;
