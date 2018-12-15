@@ -589,7 +589,7 @@ void *mm_malloc(size_t size)
 
     // Ensures that we never get a block smaller than a certain size, which
     // would be problematic when freeing
-    aligned_size = MAX(aligned_size, MINCHUNK);
+    aligned_size = align_to_word(MAX(aligned_size, MINCHUNK));
 
     // If we don't get the free block, then just extend it, otherwise we're fine
     // Could potentially do it so that we allocate a lot more at once, and add
@@ -617,7 +617,7 @@ void mm_free(void *ptr)
     }
 
     // Get size class and size of the block
-    size_t size = get_size(header_pointer(ptr));
+    size_t size = align_to_word(get_size(header_pointer(ptr)));
     size_t size_class = get_class(size); //the function should be get_class() right? It read size_class()
 
     // Change allocation status in the header and footer pointers
@@ -691,7 +691,7 @@ static void *coalesce(void *bp)
         return;
     }
 
-    size_t size = get_size(header_pointer(bp));
+    size_t size = align_to_word(get_size(header_pointer(bp)));
     // Since these return pointers to the base of the payload, they
     // need to be shifted back to the header for reads and writes
     size_t *next = next_block_ptr(bp);
@@ -722,15 +722,15 @@ static void *coalesce(void *bp)
     else if (!get_alloc(header_pointer(next)) && get_alloc(header_pointer(prev)))
     {
         // Case 2: prev free, next allocated -> coalesce with previous
-        size += get_size(header_pointer(next));
+        size += align_to_word(get_size(header_pointer(next)));
         remove_free_block(next);
         put(header_pointer(bp), pack(size, 0));
         put(footer_pointer(bp), pack(size, 0));
-    }
+    }       
     else if (get_alloc(header_pointer(next)) && !get_alloc(header_pointer(prev)))
     {
         // Case 3: prev allocated, next free -> coalesce with next
-        size += get_size(header_pointer(prev));
+        size += align_to_word(get_size(header_pointer(prev)));
         remove_free_block(prev);
         put(footer_pointer(bp), pack(size, 0));
         put(header_pointer(prev), pack(size, 0));
@@ -739,7 +739,7 @@ static void *coalesce(void *bp)
     else if (!get_alloc(header_pointer(next)) && !get_alloc(header_pointer(prev)))
     {
         // Case 4: prev free, next free -> coalesce with both
-        size = size + get_size(header_pointer(prev)) + get_size(header_pointer(next));
+        size = align_to_word(size + get_size(header_pointer(prev)) + get_size(header_pointer(next)));
         remove_free_block(prev);
         remove_free_block(next);
         put(header_pointer(prev), pack(size, 0));
