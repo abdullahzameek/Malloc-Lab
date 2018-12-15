@@ -450,7 +450,6 @@ static inline void add_free_block(int class, void *pointer)
         {
             break;
         }
-
         current = get(get_next_free(current));
     }
 
