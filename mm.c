@@ -651,13 +651,10 @@ void *mm_malloc(size_t size)
 void mm_free(void *ptr)
 {
     if (ptr == NULL)
-    {
         return;
-    }
 
     // Get size class and size of the block
-    size_t size = align_to_word(get_size(header_pointer(ptr)));
-    size_t size_class = get_class(size); //the function should be get_class() right? It read size_class()
+    size_t size = get_size(header_pointer(ptr));
 
     // Change allocation status in the header and footer pointers
     put(header_pointer(ptr), pack(size, 0));
@@ -732,11 +729,9 @@ static void *coalesce(void *bp)
 {
     // Simple check to see if
     if (bp == NULL)
-    {
         return;
-    }
 
-    size_t size = align_to_word(get_size(header_pointer(bp)));
+    size_t size = get_size(header_pointer(bp));
     // Since these return pointers to the base of the payload, they
     // need to be shifted back to the header for reads and writes
     size_t *next = next_block_ptr(bp);
@@ -746,17 +741,8 @@ static void *coalesce(void *bp)
     // behavior. For that reason, we can't assume that there is in fact a previous or a next, so
     // those pointers effectively become useless. Need some sort of way of handling that
 
-    // There's no next, then coalescing can happen to the left only
-    if (next == NULL)
-    {
+    if (prev == NULL && next == NULL)
         return;
-    }
-
-    // There's no previous entry, then coalescing happens to the right only
-    if (prev == NULL)
-    {
-        return;
-    }
 
     // Without loss of generality, we will not be coalescing more than
     // three blocks at a time, due to the overheads incurred in seeking
@@ -768,33 +754,39 @@ static void *coalesce(void *bp)
     else if (!get_alloc(header_pointer(next)) && get_alloc(header_pointer(prev)))
     {
         // Case 2: prev free, next allocated -> coalesce with previous
-        size += align_to_word(get_size(header_pointer(next)));
+        size += get_size(header_pointer(next)) + 2 * WSIZE;
         remove_free_block(next);
         put(header_pointer(bp), pack(size, 0));
-        put(footer_pointer(bp), pack(size, 0));
+        put(footer_pointer(next), pack(size, 0));
+        memset(bp, 0,size);
+        add_free_block(get_class(size), bp);
+        return;
     }
     else if (get_alloc(header_pointer(next)) && !get_alloc(header_pointer(prev)))
     {
         // Case 3: prev allocated, next free -> coalesce with next
-        size += align_to_word(get_size(header_pointer(prev)));
+        size += get_size(header_pointer(prev)) + 2 * WSIZE;
         remove_free_block(prev);
-        put(footer_pointer(bp), pack(size, 0));
         put(header_pointer(prev), pack(size, 0));
+        put(footer_pointer(bp), pack(size, 0));
+        memset(prev, 0, size);
         bp = prev;
+        add_free_block(get_class(size), bp);
+        return;
     }
     else if (!get_alloc(header_pointer(next)) && !get_alloc(header_pointer(prev)))
     {
         // Case 4: prev free, next free -> coalesce with both
-        size = align_to_word(size + get_size(header_pointer(prev)) + get_size(header_pointer(next)));
+        size = size + get_size(header_pointer(prev) + get_size(header_pointer(next))) + 4 * WSIZE;
         remove_free_block(prev);
         remove_free_block(next);
         put(header_pointer(prev), pack(size, 0));
         put(footer_pointer(next), pack(size, 0));
+        memset(prev, 0, size);
         bp = prev;
+        add_free_block(get_class(size), bp);
+        return;
     }
-
-    int sc = get_class(size);
-    add_free_block(sc, bp);
 }
 
 /* 
@@ -817,7 +809,7 @@ static void split_block(void *ptr, size_t newsize)
     size_t chunksize = size - newsize;
     size_t *new_chunk = shift(ptr, newsize);
 
-    put(new_chunk, pack(chunksize - 2 * WSIZE,0));
+    put(new_chunk, pack(chunksize - 2 * WSIZE, 0));
     put(shift(new_chunk, chunksize - 2 * WSIZE), pack(chunksize - 2 * WSIZE, 0));
 
     // Finally, add the new chunk to the appropriate free list
