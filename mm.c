@@ -51,19 +51,26 @@
  *  allocated memory
  * used memory - this is where the diagrams above would be 
  *  placed, both free and non-free in (most probably) non-contiguous blocks
- *  High level implementation details:
- * -Free memory works as a doubly linked list. How to make it work like one when the allocated size is too small?
+ * 
+ * High level implementation details:
+ * -Free memory works as a doubly linked list.
  * -There doesn't need to be a way to iterate over the allocated data, merely know what's allocated, and how large it is
  * -The first several words of the heap are a lookup table, which is a static memory overhead, but should be worth it in long run
- * -We use a simple first-fit memory allocation strategy, but should do address ordering for the insertion
+ * -We use a simple first-fit memory allocation strategy, and use address ordering for the insertion
  * 
  * VERY IMPORTANT DETAILS TO KEEP IN MIND BECAUSE THEY'RE NOT TRIVIAL AND TOOK US A LONG TIME TO FIGURE OUT:
  * -there is a distinction between user space pointers and pointers we use internally (henceforth dubbed 'malloc space'):
  * user space pointers are aligned TO THE START OF THE PAYLOAD, and malloc space pointers are aligned TO THE START OF THE HEADER.
  * This took us a while to figure out (seems pretty obvious in retrospect) and it effectively means that any pointer that comes
  * from user space needs to have a transform applied to have it work properly, otherwise resulting in numerous segfaults.
- * - 
- * 
+ * -alignment is very sensitive to the initial values of the heap. Since we need to align the payload to a dword, the bottom of 
+ * the heap needs to be aligned in such a way that this is the case for every payload henceforth.
+ * -existing solutions often cast the pointer to a char pointer, in order to simplify the pointer arithmetic (since a char is 
+ * 1 byte in size, regardless of platform). We weren't the greatest fans of the approach, so we opted to cast them to size_t, which
+ * is a type directly meant to be able to address any location in the address space, do the arithmetic on it as though it were a  
+ * regular number and then cast it back to a pointer
+ * -the movement between void* and size_t* is quite arbitrary, and we could convert everything to size_t, since we really could use * as much help as the compiler could offer us, which is the reason we ditched macros in the first place (no type checking, and O0 * does not optimize away inline functions, meaning that we could actually debug them, and then use higher optimization levels to
+ * do away with function call overhead) 
  */
 
 #include <assert.h>
@@ -95,7 +102,7 @@ team_t team = {
 #define WSIZE 4
 
 // System page size
-#define CHUNKSIZE (1L << 12)
+#define CHUNKSIZE (1 << 12)
 
 // The minimum possible free chunk size. If we add this restriction, then
 // there should be no problems with allocation in the lower size classes.
@@ -124,8 +131,11 @@ static size_t *lookup_table = NULL;
 
 // Function prototypes for all of the independently implemented functions.
 
-// These functions were adapted from code provided by the
-// textbook and are useful for coalescing
+/* 
+ * These functions were adapted from the textbook, but are commented more 
+ * liberally, to ensure we don't lose information about them between context
+ * switches, and to make them more transparent (the original macros certainly aren't)
+*/
 static inline size_t align_to_word(size_t size);
 static inline size_t get(void *pointer);
 static inline void put(void *pointer, size_t value);
@@ -137,9 +147,11 @@ static inline size_t *footer_pointer(void *bp);
 static inline void *next_block_ptr(void *bp);
 static inline void *prev_block_ptr(void *bp);
 static inline int valid_heap_address(void *bp);
+static inline size_t *shift(size_t *pointer, size_t shft);
 
-// Functions to help us manipulate the free memory
-// doubly linked lists
+/*
+ * Functions that will help us manipulate the in-memory free linked lists 
+ */
 static inline int get_class(size_t size);
 static void *get_free_block(int class, size_t size);
 static void remove_free_block(void *pointer);
@@ -147,10 +159,14 @@ static void add_free_block(int class, void *pointer);
 static inline void *get_lookup_row(int class);
 static inline size_t *get_next_free(void *base);
 static inline size_t *get_prev_free(void *base);
+
+/* 
+ * Auxiliary functions that allow us to manipulate the heap, coalesce and split
+ * existing blocks, in addition to the heap checker. 
+ */
 static void *extend_heap(size_t bytes);
 static void *coalesce(void *bp);
 static void split_block(void *ptr, size_t newsize);
-static inline size_t *shift(size_t *pointer, size_t shft);
 static int mm_checkheap();
 
 /* 
@@ -160,8 +176,10 @@ START OF THE GENERAL POINTER MANIPULATION METHODS
 */
 
 /* 
- * align_to_word - given a user-defined size, align it
- * to the next word boundary. Since this means making it even.
+ * align_to_word - given a user-defined size, align it to the next word boundary. 
+ * Taking the logical AND with any value greater than a multiple of eight and 
+ * ~0x7 will result in a multiple of eight every single time (have confirmed it
+ * numerically).
  */
 static inline size_t align_to_word(size_t size)
 {
@@ -173,36 +191,38 @@ static inline size_t align_to_word(size_t size)
  */
 static inline size_t get(void *pointer)
 {
-    if(!valid_heap_address(pointer))
-    {
-        return NULL;
-    }
-    else
+    // Since we were running into the problem of noise in subsequent memory
+    // manipulations, where the memory was not zeroed properly after use,
+    // we got a lot of false positives, which we are now rooting out
+    // by checking if an address is on the heap or not
+    if (valid_heap_address(pointer))
     {
         return *(size_t *)pointer;
     }
+    return NULL;
 }
 
 /* 
  * put - assign a given value to the location pointed to 
- * by the pointer
+ * by the pointer.
  */
 static inline void put(void *pointer, size_t value)
 {
-    if (!valid_heap_address(pointer))
-    {
-        return NULL;
-    }
-    else 
+    // Only really need to write to relevant locations in memory.
+    if (valid_heap_address(pointer))
     {
         (*(size_t *)pointer) = value;
     }
 }
 
-static inline int valid_heap_address(void *bp) {
+/* 
+ * valid_heap_address - check if a given address is valid or not,
+ * given the bounds of the heap.
+ */
+static inline int valid_heap_address(void *bp)
+{
     return bp < mem_heap_lo() && bp > mem_heap_hi();
 }
-
 
 /* 
  * pack - combine the chunk size and allocation data
@@ -213,62 +233,76 @@ static inline size_t pack(size_t size, size_t alloc)
     return size | alloc;
 }
 
-// Get the size of a block, given a pointer to the header or footer
+/* 
+ * get_size - get the size of a block, given a malloc space pointer to the header 
+ * or the footer of an existing block.
+ */
 static inline size_t get_size(void *pointer)
 {
     return get(pointer) & ~(size_t)0x7;
 }
 
-// Get the allocation status of a block, given a pointer
+/*
+ * get_alloc - get the allocation status of a block, given a malloc space pointer
+ * to the header or the footer of an existing block.
+ *  
+ */
 static inline size_t get_alloc(void *pointer)
 {
     return get(pointer) & (size_t)0x1;
 }
 
-// Casting to char pointer occurs due to need for pointer arithmetic, due to the
-// size of the char, which is 1 byte. This means that any offset will be taken
-// at face value. bp stands for base pointer, and it's actually the pointer
-// that would be returned by malloc.
-
-// This should work, given a normal pointer
+/*
+ * header_pointer - given a user space pointer, return the address of its 
+ * header.
+ */
 static inline size_t *header_pointer(void *bp)
 {
-    if (!(valid_heap_address(bp)))
-    {
-        return NULL;
-    }
-    else
+    if (valid_heap_address(bp))
     {
         return (size_t *)(((size_t)bp) - WSIZE);
     }
+    return NULL;
 }
 
+/*
+ * footer_pointer - given a user space pointer, return the address of its
+ * footer.
+ */
 static inline size_t *footer_pointer(void *bp)
 {
-    if (!(valid_heap_address(bp)))
-    {
-        return NULL;
-    }
-    else
+    if (valid_heap_address(bp))
     {
         return (size_t *)(((size_t)bp) + get_size((void *)header_pointer(bp)));
     }
+    return NULL;
 }
 
-// Get a pointer to base of the next block, given a pointer to an allocated one
+/*
+ * next_block_ptr - given a user space pointer, return a valid pointer 
+ * to the next block, if the block exists.  
+ */
 static inline void *next_block_ptr(void *bp)
 {
-    return (void *)(((size_t)footer_pointer(bp)) + 2 * WSIZE);
+    if (valid_heap_address(bp))
+    {
+        return (void *)(((size_t)footer_pointer(bp)) + 2 * WSIZE);
+    }
+    return NULL;
 }
 
-// Get a pointer to the previous block, given a pointer to an allocated one.
-// Assumes contiguity in memory
+/* 
+ * prev_block_ptr - given a user space pointer, return a valid 
+ * pointer to the previous block, if such a block should exist.
+ * 
+ */
 static inline void *prev_block_ptr(void *bp)
 {
-    // Note that this is calculated from the PAYLOAD, not the base
-    // of the chunk, and all of the manipulations take that into
-    // account
-    return (void *)(((size_t)bp) - get_size((void *)(((size_t)bp) - 2 * WSIZE)) - 2 * WSIZE);
+    if (valid_heap_address(bp))
+    {
+        return (void *)(((size_t)bp) - get_size((void *)(((size_t)bp) - 2 * WSIZE)) - 2 * WSIZE);
+    }
+    return NULL;
 }
 
 /* 
@@ -284,19 +318,20 @@ METHODS
  * values, and has been verified experimentally to work on the 
  * entire range of values that are expected.
  * 
- * ASSUMPTION: the min value for size is 16
+ * ASSUMPTION: the min value for size is 16, which is the 
+ * MINCHUNK
  * 
  */
 static inline int get_class(size_t size)
 {
     for (int i = 0; i < CLASSES; i++)
     {
+        // Offset by four to start counting from the MINCHUNK
         if (size < (1 << (4 + i)))
         {
             return i - 1;
         }
     }
-
     return CLASSES - 1;
 }
 
@@ -330,11 +365,7 @@ static inline void *get_free_block(int class, size_t size)
             return current;
         }
 
-        current = *get_next_free(current);
-        if (valid_heap_address(current)) {
-            current = NULL;
-        }
-
+        current = get(get_next_free(current));
     }
 
     return NULL;
@@ -350,15 +381,6 @@ static inline void remove_free_block(void *pointer)
     // Assume malloc space - pointer to base of payload
     size_t *next = (size_t *)header_pointer(get_next_free(pointer));
     size_t *prev = (size_t *)header_pointer(get_prev_free(pointer));
- 
-    if (!valid_heap_address(next)) {
-        next = NULL;
-    }
-    if (!valid_heap_address(prev)) {
-        prev = NULL;
-    }
-
-
 
     // While there are four possible combinations of null and not null
     // values for `next` and `prev`, only three of them can occur, since
@@ -423,24 +445,23 @@ static inline void add_free_block(int class, void *pointer)
     // and taken as a
     while (current != NULL && current > lookup_table)
     {
-        if (!valid_heap_address(get(get_next_free(current)))) {
+        // Stopping before current = NULL
+        if (!valid_heap_address(get(get_next_free(current))))
+        {
             break;
         }
-        
+
         current = get(get_next_free(current));
-        
     }
 
     size_t *nextNode = get(get_next_free(current));
-    if (!valid_heap_address(nextNode)) {
-        nextNode = NULL;
-    }
 
     // We're assuming that the previous is always valid
     size_t *prevNode = current;
 
     // Set the previous ptr of the next block
-    if (nextNode != NULL) {
+    if (nextNode != NULL)
+    {
         put(shift(nextNode, 2 * WSIZE), pointer);
     }
 
@@ -486,7 +507,11 @@ static inline size_t *get_prev_free(void *base)
     return shift(base, 2 * WSIZE);
 }
 
-// Helps us do a lot of pointer manipulation
+/* 
+ * shift - having noticed that we do a lot of casting between pointer and value, 
+ * we decided to make a simple function that abstracts this rather nasty pointer 
+ * manipulation
+ */
 static inline size_t *shift(size_t *pointer, size_t shft)
 {
     return (size_t *)(((size_t)pointer) + shft);
@@ -497,6 +522,7 @@ static inline size_t *shift(size_t *pointer, size_t shft)
 END OF DOUBLE LINKED LIST MANIPULATION METHODS
 
 */
+
 /*
 Checks for the following heap invariants:
 - header and footer match
@@ -511,14 +537,28 @@ static int mm_checkheap()
 {
     void *iterator = lookup_table;
     void *heap_top = mem_heap_hi();
+
     void *lookup_top = shift(lookup_table, CLASS_OVERHEAD);
     puts("\nStart of consistency check");
 
+    int count = 0;
+    // We start by showing the values encoded in the lookup table, and seeing
+    // if they all correspond to valid addresses
     while (iterator < lookup_top)
     {
         printf("Lookup table entry 0x%x has the value 0x%x\n", iterator, get(iterator));
         iterator = shift(iterator, WSIZE);
+        count++;
     }
+    // Checking the size of the lookup_table,
+    if (count != CLASSES - 1)
+    {
+        puts("The lookup table is incorrectly sized!");
+    }
+
+    // TODO Check the free lists
+    // TODO Check the heap itself
+
     puts("End of heap consistency checker");
 }
 
@@ -528,9 +568,8 @@ static int mm_checkheap()
 int mm_init(void)
 {
     void *top;
-    // Experimentally, there is no need to pad to align this to boundary aligned size.
-    // Since each block will be sourrounded by a header and a footer, we only need
-    // to align the payload, and not the headers and class sizes themselves.
+
+    // We include one block of padding to ensure that subsequent blocks are aligned
     if ((lookup_table = extend_heap((CLASSES + 3) * WSIZE)) == NULL)
     {
         return -1;
@@ -539,7 +578,6 @@ int mm_init(void)
     // Put an empty lookup table for the linked list pointers at the top (bottom?) of the heap
     for (int i = 0; i < CLASSES; i++)
     {
-        // TODO Replace this with a function call, just please no macros
         put(shift(lookup_table, i * WSIZE), 0);
     }
 
@@ -555,6 +593,7 @@ int mm_init(void)
     // make sure that all is well
     heap_list = shift(heap_list, 2 * WSIZE);
 
+    // Just in case, we align it to dword, as an additional precaution
     size_t aligned_page = align_to_word(CHUNKSIZE + 2 * WSIZE);
 
     if ((top = extend_heap(aligned_page)) == NULL)
@@ -562,10 +601,10 @@ int mm_init(void)
         return -1;
     }
 
-    // Add the page to the free list
+    // Add the new free block to the corresponding free list
     size_t sc = get_class(CHUNKSIZE + 2 * WSIZE);
     put(top, pack(CHUNKSIZE, 0));
-    put(top + CHUNKSIZE, pack(CHUNKSIZE, 0));
+    put(shift(top, CHUNKSIZE), pack(CHUNKSIZE, 0));
 
     add_free_block(sc, top);
 
@@ -670,9 +709,12 @@ void *mm_realloc(void *ptr, size_t size)
     }
 }
 
+/*
+ * extend_heap - a wrapper around mem_sbrk that double checks whether 
+ * sbrk can extend heap.
+ */
 static void *extend_heap(size_t bytes)
 {
-    // ASSUME THAT ALIGNED
     void *final;
 
     if ((final = mem_sbrk(bytes)) == -1)
@@ -683,6 +725,9 @@ static void *extend_heap(size_t bytes)
     return final;
 }
 
+/* 
+ * coalesce - merge the previous and next blocks, if they're free, otherwise do nothing.
+ */
 static void *coalesce(void *bp)
 {
     // Simple check to see if
@@ -702,14 +747,15 @@ static void *coalesce(void *bp)
     // those pointers effectively become useless. Need some sort of way of handling that
 
     // There's no next, then coalescing can happen to the left only
-    if (next == NULL || next > mem_heap_hi())
+    if (next == NULL)
     {
         return;
     }
 
     // There's no previous entry, then coalescing happens to the right only
-    if (prev == NULL || prev < shift(lookup_table, CLASS_OVERHEAD))
+    if (prev == NULL)
     {
+        return;
     }
 
     // Without loss of generality, we will not be coalescing more than
@@ -726,7 +772,7 @@ static void *coalesce(void *bp)
         remove_free_block(next);
         put(header_pointer(bp), pack(size, 0));
         put(footer_pointer(bp), pack(size, 0));
-    }       
+    }
     else if (get_alloc(header_pointer(next)) && !get_alloc(header_pointer(prev)))
     {
         // Case 3: prev allocated, next free -> coalesce with next
@@ -749,4 +795,31 @@ static void *coalesce(void *bp)
 
     int sc = get_class(size);
     add_free_block(sc, bp);
+}
+
+/* 
+ * split_block - given a malloc space pointer to a block not on a free list, break it apart,
+ * add the fragment to a free list. The original pointer now points to a smaller chunk.
+ * 
+ * ASSUMPTIONS: newsize includes both header and footer and is already aligned
+ */
+static void split_block(void *ptr, size_t newsize)
+{
+    // Get the size and then figure out how large the payload is
+    size_t size = get_size(ptr);
+    size_t payload = newsize - 2 * WSIZE;
+
+    // Write the header and footer blocks
+    put(ptr, pack(payload, 1));
+    put(shift(ptr, payload), pack(payload, 1));
+
+    // Then handle the new chunk
+    size_t chunksize = size - newsize;
+    size_t *new_chunk = shift(ptr, newsize);
+
+    put(new_chunk, pack(chunksize - 2 * WSIZE,0));
+    put(shift(new_chunk, chunksize - 2 * WSIZE), pack(chunksize - 2 * WSIZE, 0));
+
+    // Finally, add the new chunk to the appropriate free list
+    add_free_block(get_class(chunksize), new_chunk);
 }
