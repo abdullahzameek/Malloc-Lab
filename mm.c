@@ -173,7 +173,14 @@ static inline size_t align_to_word(size_t size)
  */
 static inline size_t get(void *pointer)
 {
-    return *(size_t *)pointer;
+    if(!valid_heap_address(pointer))
+    {
+        return NULL;
+    }
+    else
+    {
+        return *(size_t *)pointer;
+    }
 }
 
 /* 
@@ -182,11 +189,18 @@ static inline size_t get(void *pointer)
  */
 static inline void put(void *pointer, size_t value)
 {
-    (*(size_t *)pointer) = value;
+    if (!valid_heap_address(pointer))
+    {
+        return NULL;
+    }
+    else 
+    {
+        (*(size_t *)pointer) = value;
+    }
 }
 
 static inline int valid_heap_address(void *bp) {
-    return bp > mem_heap_lo() && bp < mem_heap_hi();
+    return bp < mem_heap_lo() && bp > mem_heap_hi();
 }
 
 
@@ -219,12 +233,26 @@ static inline size_t get_alloc(void *pointer)
 // This should work, given a normal pointer
 static inline size_t *header_pointer(void *bp)
 {
-    return (size_t *)(((size_t)bp) - WSIZE);
+    if (!(valid_heap_address(bp)))
+    {
+        return NULL;
+    }
+    else
+    {
+        return (size_t *)(((size_t)bp) - WSIZE);
+    }
 }
 
 static inline size_t *footer_pointer(void *bp)
 {
-    return (size_t *)(((size_t)bp) + get_size((void *)header_pointer(bp)));
+    if (!(valid_heap_address(bp)))
+    {
+        return NULL;
+    }
+    else
+    {
+        return (size_t *)(((size_t)bp) + get_size((void *)header_pointer(bp)));
+    }
 }
 
 // Get a pointer to base of the next block, given a pointer to an allocated one
