@@ -659,7 +659,7 @@ void mm_free(void *ptr)
     memset(ptr, 0, size);
 
     // Add the free block to size class linked list
-    return coalesce(ptr);
+    coalesce(ptr);
 }
 
 /*
@@ -742,14 +742,14 @@ static void *coalesce(void *bp)
     // those pointers effectively become useless. Need some sort of way of handling that
 
     if (prev == NULL && next == NULL)
-        return;
+        return bp;
 
     // Without loss of generality, we will not be coalescing more than
     // three blocks at a time, due to the overheads incurred in seeking
     if (get_alloc(nextNode) && get_alloc(prevNode))
     {
         // Case 1: prev and next allocated -> do nothing
-        return;
+        return bp;
     }
     else if (!get_alloc(nextNode) && get_alloc(prevNode))
     {
@@ -760,7 +760,7 @@ static void *coalesce(void *bp)
         put(footer_pointer(next), pack(size, 0));
         memset(bp, 0,size);
         add_free_block(get_class(size), bp);
-        return;
+        return bp;
     }
     else if (get_alloc(nextNode) && !get_alloc(prevNode))
     {
@@ -772,7 +772,7 @@ static void *coalesce(void *bp)
         memset(prev, 0, size);
         bp = prev;
         add_free_block(get_class(size), bp);
-        return;
+        return bp;
     }
     else if (!get_alloc(nextNode) && !get_alloc(prevNode))
     {
@@ -786,7 +786,7 @@ static void *coalesce(void *bp)
         memset(next,0, size); //added next as well because I think it belongs here too? 
         bp = prev;
         add_free_block(get_class(size), bp);
-        return;
+        return bp;
     }
     }
 }
