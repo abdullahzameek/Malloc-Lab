@@ -726,6 +726,7 @@ static void *extend_heap(size_t bytes)
  */
 static void *coalesce(void *bp)
 {
+    if (valid_heap_address(bp)){
     // Simple check to see if
     if (bp == NULL)
         return;
@@ -736,6 +737,11 @@ static void *coalesce(void *bp)
     size_t *next = next_block_ptr(bp);
     size_t *prev = prev_block_ptr(bp);
 
+    //decided to create two pointers for the headers of next and previous to cut down number of function calls.
+    //seems to improve the Kops even without the -O2 flag
+    size_t* nextNode = header_pointer(next);
+    size_t* prevNode = header_pointer(prev);
+     
     // Checking if either of the conditions is NULL, and barring that, checking if there is any undefined
     // behavior. For that reason, we can't assume that there is in fact a previous or a next, so
     // those pointers effectively become useless. Need some sort of way of handling that
@@ -745,15 +751,15 @@ static void *coalesce(void *bp)
 
     // Without loss of generality, we will not be coalescing more than
     // three blocks at a time, due to the overheads incurred in seeking
-    if (get_alloc(header_pointer(next)) && get_alloc(header_pointer(prev)))
+    if (get_alloc(nextNode) && get_alloc(prevNode))
     {
         // Case 1: prev and next allocated -> do nothing
         return;
     }
-    else if (!get_alloc(header_pointer(next)) && get_alloc(header_pointer(prev)))
+    else if (!get_alloc(nextNode) && get_alloc(prevNode))
     {
         // Case 2: prev free, next allocated -> coalesce with previous
-        size += align_to_word(get_size(header_pointer(next)) + 2 * WSIZE);
+        size += align_to_word(get_size(nextNode) + 2 * WSIZE);
         remove_free_block(next);
         put(header_pointer(bp), pack(size, 0));
         put(footer_pointer(next), pack(size, 0));
@@ -761,31 +767,32 @@ static void *coalesce(void *bp)
         add_free_block(get_class(size), bp);
         return;
     }
-    else if (get_alloc(header_pointer(next)) && !get_alloc(header_pointer(prev)))
+    else if (get_alloc(nextNode) && !get_alloc(prevNode))
     {
         // Case 3: prev allocated, next free -> coalesce with next
-        size += align_to_word(get_size(header_pointer(prev)) + 2 * WSIZE);
+        size += align_to_word(get_size(prevNode) + 2 * WSIZE);
         remove_free_block(prev);
-        put(header_pointer(prev), pack(size, 0));
+        put(prevNode, pack(size, 0));
         put(footer_pointer(bp), pack(size, 0));
         memset(prev, 0, size);
         bp = prev;
         add_free_block(get_class(size), bp);
         return;
     }
-    else if (!get_alloc(header_pointer(next)) && !get_alloc(header_pointer(prev)))
+    else if (!get_alloc(nextNode) && !get_alloc(prevNode))
     {
         // Case 4: prev free, next free -> coalesce with both
-        size = align_to_word(size + get_size(header_pointer(prev) + get_size(header_pointer(next))) + 4 * WSIZE);
+        size = align_to_word(size + get_size(prevNode) + get_size(nextNode) + 4 * WSIZE);
         remove_free_block(prev);
         remove_free_block(next);
-        put(header_pointer(prev), pack(size, 0));
-        put(footer_pointer(next), pack(size, 0));
+        put(prevNode, pack(size, 0));
+        put(footer_pointer(next), pack(size, 0));   
         memset(prev, 0, size);
         memset(next,0, size); //added next as well because I think it belongs here too? 
         bp = prev;
         add_free_block(get_class(size), bp);
         return;
+    }
     }
 }
 
