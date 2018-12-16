@@ -380,7 +380,7 @@ static inline void *get_free_block(int class, size_t size)
  */
 static inline void remove_free_block(void *pointer)
 {
-    // Assume malloc space - pointer to base of payload
+    // Assume user space - pointer to base of payload
     size_t *next = (size_t *)header_pointer(get_next_free(pointer));
     size_t *prev = (size_t *)header_pointer(get_prev_free(pointer));
 
@@ -729,7 +729,6 @@ static void *coalesce(void *bp)
     if (!valid_heap_address(bp) || bp == NULL)
         return;
 
-    // I
     size_t size = get_size(header_pointer(bp));
     // Since these return pointers to the base of the payload, they
     // need to be shifted back to the header for reads and writes
@@ -750,35 +749,34 @@ static void *coalesce(void *bp)
 
     // Without loss of generality, we will not be coalescing more than
     // three blocks at a time, due to the overheads incurred in seeking
+    // Case 1: prev and next allocated -> do nothing
     if (get_alloc(nextNode) > 0 && get_alloc(prevNode) > 0)
     {
-        // Case 1: prev and next allocated -> do nothing
         return;
     }
+    // Case 2: prev free, next allocated -> coalesce with previous
     else if (get_alloc(nextNode) == 0 && get_alloc(prevNode) > 0)
     {
-        // Case 2: prev free, next allocated -> coalesce with previous
         size += get_size(nextNode) + 2 * WSIZE;
         remove_free_block(next);
         put(header_pointer(bp), pack(size, 0));
         put(footer_pointer(next), pack(size, 0));
     }
+    // Case 3: prev allocated, next free -> coalesce with next
     else if (get_alloc(nextNode) > 0 && get_alloc(prevNode) == 0)
     {
-        // Case 3: prev allocated, next free -> coalesce with next
         size += get_size(prevNode) + 2 * WSIZE;
         remove_free_block(prev);
         put(prevNode, pack(size, 0));
         put(footer_pointer(bp), pack(size, 0));
         bp = prev;
     }
+    // Case 4: prev free, next free -> coalesce with both
     else if (get_alloc(nextNode) == 0 && get_alloc(prevNode) == 0)
     {
-        // Case 4: prev free, next free -> coalesce with both
-        // Aligning these could cause unintended behavior
         size = size + get_size(prevNode) + get_size(nextNode) + 4 * WSIZE;
-        remove_free_block(prev);
         remove_free_block(next);
+        remove_free_block(prev);
         put(prevNode, pack(size, 0));
         put(footer_pointer(next), pack(size, 0));   
         bp = prev;
