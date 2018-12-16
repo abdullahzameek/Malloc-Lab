@@ -682,6 +682,7 @@ void *mm_realloc(void *ptr, size_t size)
     if (ptr != NULL && size == 0)
     {
         mm_free(ptr);
+        coalesce(ptr);
         return NULL;
     }
 
@@ -726,7 +727,6 @@ static void *extend_heap(size_t bytes)
  */
 static void *coalesce(void *bp)
 {
-    if (valid_heap_address(bp)){
     // Simple check to see if
     if (bp == NULL)
         return;
@@ -792,7 +792,6 @@ static void *coalesce(void *bp)
         bp = prev;
         add_free_block(get_class(size), bp);
         return;
-    }
     }
 }
 
