@@ -650,7 +650,7 @@ void *mm_malloc(size_t size)
  */
 void mm_free(void *ptr)
 {
-    if (ptr == NULL)
+    if (ptr == NULL || !valid_heap_address(ptr))
         return;
 
     // Get size class and size of the block
@@ -660,12 +660,10 @@ void mm_free(void *ptr)
     put(header_pointer(ptr), pack(size, 0));
     put(footer_pointer(ptr), pack(size, 0));
 
-    // Zero out the chunk, just in case, to make sure that there are no random values floating around
-    // in the heap
-    memset(ptr, 0, size);
+    coalesce(ptr);
 
     // Add the free block to size class linked list
-    return coalesce(ptr);
+    return;
 }
 
 /*
@@ -727,9 +725,12 @@ static void *extend_heap(size_t bytes)
  */
 static void *coalesce(void *bp)
 {
+	puts("Coalesce is being called");
+
     // Simple check to see if
     if (bp == NULL)
         return;
+
 
     size_t size = get_size(header_pointer(bp));
     // Since these return pointers to the base of the payload, they
@@ -758,9 +759,7 @@ static void *coalesce(void *bp)
         remove_free_block(next);
         put(header_pointer(bp), pack(size, 0));
         put(footer_pointer(next), pack(size, 0));
-        memset(bp, 0,size);
-        add_free_block(get_class(size), bp);
-        return;
+        memset(bp, 0, size);
     }
     else if (get_alloc(header_pointer(next)) && !get_alloc(header_pointer(prev)))
     {
@@ -771,8 +770,6 @@ static void *coalesce(void *bp)
         put(footer_pointer(bp), pack(size, 0));
         memset(prev, 0, size);
         bp = prev;
-        add_free_block(get_class(size), bp);
-        return;
     }
     else if (!get_alloc(header_pointer(next)) && !get_alloc(header_pointer(prev)))
     {
@@ -784,9 +781,10 @@ static void *coalesce(void *bp)
         put(footer_pointer(next), pack(size, 0));
         memset(prev, 0, size);
         bp = prev;
-        add_free_block(get_class(size), bp);
-        return;
     }
+
+    add_free_block(get_class(size), bp);
+    return;
 }
 
 /* 
