@@ -248,7 +248,8 @@ static inline size_t get_size(void *pointer)
 static inline size_t get_alloc(void *pointer)
 {
     size_t ptr;
-    if ((ptr = get(pointer)) == NULL) {
+    if ((ptr = get(pointer)) == NULL)
+    {
         return -1;
     }
 
@@ -538,27 +539,27 @@ static int mm_checkheap()
     void *heap_top = mem_heap_hi();
 
     void *lookup_top = shift(lookup_table, CLASS_OVERHEAD);
-    puts("\nStart of consistency check");
+    // puts("\nStart of consistency check");
 
     int count = 0;
     // We start by showing the values encoded in the lookup table, and seeing
     // if they all correspond to valid addresses
     while (iterator < lookup_top)
     {
-        printf("Lookup table entry 0x%x has the value 0x%x\n", iterator, get(iterator));
+        // printf("Lookup table entry 0x%x has the value 0x%x\n", iterator, get(iterator));
         iterator = shift(iterator, WSIZE);
         count++;
     }
     // Checking the size of the lookup_table,
     if (count != CLASSES - 1)
     {
-        puts("The lookup table is incorrectly sized!");
+        // puts("The lookup table is incorrectly sized!");
     }
 
     // TODO Check the free lists
     // TODO Check the heap itself
 
-    puts("End of heap consistency checker");
+    // puts("End of heap consistency checker");
 }
 
 /* 
@@ -585,12 +586,13 @@ int mm_init(void)
 
     // Allocate the footer of the prologue and the header of the epilogue
     put(shift(heap_list, (0 * WSIZE)), 0);
-    put(shift(heap_list, (1 * WSIZE)), pack(2 * WSIZE, 1)); // Prologue footer
+    put(shift(heap_list, (1 * WSIZE)), pack(WSIZE, 1)); // Prologue footer
+    put(shift(heap_list, (2 * WSIZE)), pack(WSIZE, 1));
     put(shift(heap_list, (3 * WSIZE)), pack(0, 1));         // Epilogue header
 
     // The heap will be growing from between the prologue and the epilogue, so that we could
     // make sure that all is well
-    heap_list = shift(heap_list, 2 * WSIZE);
+    heap_list = shift(heap_list, 3 * WSIZE);
 
     // Just in case, we align it to dword, as an additional precaution
     size_t aligned_page = align_to_word(CHUNKSIZE + 2 * WSIZE);
@@ -659,9 +661,10 @@ void mm_free(void *ptr)
     put(header_pointer(ptr), pack(size, 0));
     put(footer_pointer(ptr), pack(size, 0));
 
-    coalesce(ptr);
+    //coalesce(ptr);
 
     // Add the free block to size class linked list
+
     return;
 }
 
@@ -719,72 +722,133 @@ static void *extend_heap(size_t bytes)
     return final;
 }
 
+// static void *coalesce(void *bp)
+// {
+//     size_t initialSize = get_size(header_pointer(bp)); //this is the size of the payload of the current block. Just the payload.
+//     size_t newSize = initialSize;
+//     size_t nextPayLoad = next_block_ptr(bp);
+//     size_t prevPayLoad = prev_block_ptr(bp);
+
+//     size_t *next = ((size_t)nextPayLoad) - WSIZE;
+//     size_t *prev = ((size_t)prevPayLoad) - WSIZE;
+
+//     size_t nextSize = get_size(next);
+//     size_t prevSize = get_size(prev);
+
+//     if (prevPayLoad == NULL && nextPayLoad == NULL)
+//     {
+//         return;
+//     }
+
+//     if (get_alloc(next) > 0 && get_alloc(prev) > 0)
+//     {
+//         return;
+//     }
+//     else if (get_alloc(next) > 0 && get_alloc(prev) == 0)
+//     {
+//         remove_free_block(prev);
+//         newSize = initialSize + prevSize + 2 * WSIZE;
+//         put(prev, pack(newSize, 0));
+//         put(footer_pointer(bp), pack(newSize, 0));
+//         bp = prev;
+//         // printf("The size is aligned: %d\n", align_to_word(newSize) == newSize);
+//     }
+//     else if (get_alloc(next) == 0 && get_alloc(prev) > 0)
+//     {
+//         remove_free_block(next);
+//         newSize = initialSize + nextSize + 2 * WSIZE;
+//         put(header_pointer(bp), pack(newSize, 0));
+//         put(footer_pointer(next), pack(newSize, 0));
+//         // printf("The size is aligned: %d\n", align_to_word(newSize) == newSize);
+//     }
+//     else if (get_alloc(next) == 0 && get_alloc(prev) == 0)
+//     {
+//         remove_free_block(next);
+//         remove_free_block(prev);
+//         newSize = initialSize + nextSize + prevSize + 4 * WSIZE;
+//         put(prev, pack(newSize, 0));
+//         put(footer_pointer(next), pack(newSize, 0));
+//         bp = prev;
+//         // printf("The size is aligned: %d\n", align_to_word(newSize) == newSize);
+//     }
+
+//     add_free_block(get_class(newSize), bp);
+
+//     return bp;
+// }
+
 /* 
  * coalesce - merge the previous and next blocks, if they're free, otherwise do nothing.
  */
-static void *coalesce(void *bp)
-{
+// static void *coalesce(void *bp)
+// {
 
-    // Double checking to see if the addresses are actually expected ones
-    if (!valid_heap_address(bp) || bp == NULL)
-        return;
+//     // Double checking to see if the addresses are actually expected ones
+//     if (!valid_heap_address(bp) || bp == NULL)
+//         return;
 
-    size_t size = get_size(header_pointer(bp));
-    // Since these return pointers to the base of the payload, they
-    // need to be shifted back to the header for reads and writes
-    size_t *next = next_block_ptr(bp);
-    size_t *prev = prev_block_ptr(bp);
+//     //this is the size of the payload only - the header and the footer is not included
+//     size_t size = get_size(header_pointer(bp));
 
-    //decided to create two pointers for the headers of next and previous to cut down number of function calls.
-    //seems to improve the Kops even without the -O2 flag
-    size_t* nextNode = header_pointer(next);
-    size_t* prevNode = header_pointer(prev);
-     
-    // Checking if either of the conditions is NULL, and barring that, checking if there is any undefined
-    // behavior. For that reason, we can't assume that there is in fact a previous or a next, so
-    // those pointers effectively become useless. Need some sort of way of handling that
+//     // Since these return pointers to the base of the payload, they
+//     // need to be shifted back to the header for reads and writes
+//     size_t *next = next_block_ptr(bp);
+//     size_t *prev = prev_block_ptr(bp);
 
-    if (prev == NULL && next == NULL)
-        return;
+//     //decided to create two pointers for the headers of next and previous to cut down number of function calls.
+//     //seems to improve the Kops even without the -O2 flag
+//     size_t* nextNode = ((size_t) next) - WSIZE;
+//     size_t* prevNode = ((size_t) prev) - WSIZE;
 
-    // Without loss of generality, we will not be coalescing more than
-    // three blocks at a time, due to the overheads incurred in seeking
-    // Case 1: prev and next allocated -> do nothing
-    if (get_alloc(nextNode) > 0 && get_alloc(prevNode) > 0)
-    {
-        return;
-    }
-    // Case 2: prev free, next allocated -> coalesce with previous
-    else if (get_alloc(nextNode) == 0 && get_alloc(prevNode) > 0)
-    {
-        size += get_size(nextNode) + 2 * WSIZE;
-        remove_free_block(next);
-        put(header_pointer(bp), pack(size, 0));
-        put(footer_pointer(next), pack(size, 0));
-    }
-    // Case 3: prev allocated, next free -> coalesce with next
-    else if (get_alloc(nextNode) > 0 && get_alloc(prevNode) == 0)
-    {
-        size += get_size(prevNode) + 2 * WSIZE;
-        remove_free_block(prev);
-        put(prevNode, pack(size, 0));
-        put(footer_pointer(bp), pack(size, 0));
-        bp = prev;
-    }
-    // Case 4: prev free, next free -> coalesce with both
-    else if (get_alloc(nextNode) == 0 && get_alloc(prevNode) == 0)
-    {
-        size = size + get_size(prevNode) + get_size(nextNode) + 4 * WSIZE;
-        remove_free_block(next);
-        remove_free_block(prev);
-        put(prevNode, pack(size, 0));
-        put(footer_pointer(next), pack(size, 0));   
-        bp = prev;
-    }
+//     // Checking if either of the conditions is NULL, and barring that, checking if there is any undefined
+//     // behavior. For that reason, we can't assume that there is in fact a previous or a next, so
+//     // those pointers effectively become useless. Need some sort of way of handling that
 
-    add_free_block(get_class(size), bp);
-    return;
-}
+//     if (prev == NULL && next == NULL)
+//         return;
+
+//     // Without loss of generality, we will not be coalescing more than
+//     // three blocks at a time, due to the overheads incurred in seeking
+//     // Case 1: prev and next allocated -> do nothing
+//     if (get_alloc(nextNode) > 0 && get_alloc(prevNode) > 0)
+//     {
+//         puts("Coalesced on Case 0\n");
+//         return;
+//     }
+//     // Case 2: prev free, next allocated -> coalesce with previous
+//     else if (get_alloc(nextNode) > 0 && get_alloc(prevNode) == 0)
+//     {
+//         size += get_size(prevNode) + 2 * WSIZE;
+//         remove_free_block(prev);
+//         put(header_pointer(prev), pack(size, 0));
+//         put(footer_pointer(bp), pack(size, 0));
+//         bp = prev;
+//         puts("Coalesced on Case 1\n");
+//     }
+//     // Case 3: prev allocated, next free -> coalesce with next
+//     else if (get_alloc(nextNode) == 0 && get_alloc(prevNode) > 0)
+//     {
+//         size += get_size(nextNode) + 2 * WSIZE;
+//         remove_free_block(next);
+//         put(header_pointer(bp), pack(size, 0));
+//         put(footer_pointer(next), pack(size, 0));
+//         puts("Coalesced on Case 2\n");
+//     }
+//     // Case 4: prev free, next free -> coalesce with both
+//     else if (get_alloc(nextNode) == 0 && get_alloc(prevNode) == 0)
+//     {
+//         size += get_size(prevNode) + get_size(nextNode) + 4 * WSIZE;
+//         remove_free_block(next);
+//         remove_free_block(prev);
+//         put(header_pointer(prev), pack(size, 0));
+//         put(footer_pointer(next), pack(size, 0));
+//         bp = prev;
+//         puts("Coalesced on Case 3\n");
+//     }
+
+//     add_free_block(get_class(size), bp);
+//     return;
+// }
 
 /* 
  * split_block - given a malloc space pointer to a block not on a free list, break it apart,
