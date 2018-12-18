@@ -722,61 +722,6 @@ static void *extend_heap(size_t bytes)
     return final;
 }
 
-// static void *coalesce(void *bp)
-// {
-//     size_t initialSize = get_size(header_pointer(bp)); //this is the size of the payload of the current block. Just the payload.
-//     size_t newSize = initialSize;
-//     size_t nextPayLoad = next_block_ptr(bp);
-//     size_t prevPayLoad = prev_block_ptr(bp);
-
-//     size_t *next = ((size_t)nextPayLoad) - WSIZE;
-//     size_t *prev = ((size_t)prevPayLoad) - WSIZE;
-
-//     size_t nextSize = get_size(next);
-//     size_t prevSize = get_size(prev);
-
-//     if (prevPayLoad == NULL && nextPayLoad == NULL)
-//     {
-//         return;
-//     }
-
-//     if (get_alloc(next) > 0 && get_alloc(prev) > 0)
-//     {
-//         return;
-//     }
-//     else if (get_alloc(next) > 0 && get_alloc(prev) == 0)
-//     {
-//         remove_free_block(prev);
-//         newSize = initialSize + prevSize + 2 * WSIZE;
-//         put(prev, pack(newSize, 0));
-//         put(footer_pointer(bp), pack(newSize, 0));
-//         bp = prev;
-//         // printf("The size is aligned: %d\n", align_to_word(newSize) == newSize);
-//     }
-//     else if (get_alloc(next) == 0 && get_alloc(prev) > 0)
-//     {
-//         remove_free_block(next);
-//         newSize = initialSize + nextSize + 2 * WSIZE;
-//         put(header_pointer(bp), pack(newSize, 0));
-//         put(footer_pointer(next), pack(newSize, 0));
-//         // printf("The size is aligned: %d\n", align_to_word(newSize) == newSize);
-//     }
-//     else if (get_alloc(next) == 0 && get_alloc(prev) == 0)
-//     {
-//         remove_free_block(next);
-//         remove_free_block(prev);
-//         newSize = initialSize + nextSize + prevSize + 4 * WSIZE;
-//         put(prev, pack(newSize, 0));
-//         put(footer_pointer(next), pack(newSize, 0));
-//         bp = prev;
-//         // printf("The size is aligned: %d\n", align_to_word(newSize) == newSize);
-//     }
-
-//     add_free_block(get_class(newSize), bp);
-
-//     return bp;
-// }
-
 /* 
  * coalesce - merge the previous and next blocks, if they're free, otherwise do nothing.
  */
