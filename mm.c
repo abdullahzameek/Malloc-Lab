@@ -770,6 +770,7 @@ static void *coalesce(void *bp)
         put(prevNode, pack(size, 0));
         put(footer_pointer(bp), pack(size, 0));
         bp = prev;
+
     }
     // Case 4: prev free, next free -> coalesce with both
     else if (get_alloc(nextNode) == 0 && get_alloc(prevNode) == 0)
@@ -780,6 +781,7 @@ static void *coalesce(void *bp)
         put(prevNode, pack(size, 0));
         put(footer_pointer(next), pack(size, 0));   
         bp = prev;
+        
     }
 
     add_free_block(get_class(size), bp);
