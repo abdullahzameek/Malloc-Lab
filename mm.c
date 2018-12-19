@@ -128,6 +128,7 @@ team_t team = {
 // for reference for the rest of the file
 static size_t *heap_list = NULL;
 static size_t *lookup_table = NULL;
+static size_t coalesce_counter = 0;
 
 // Function prototypes for all of the independently implemented functions.
 
@@ -588,7 +589,7 @@ int mm_init(void)
     put(shift(heap_list, (0 * WSIZE)), 0);
     put(shift(heap_list, (1 * WSIZE)), pack(WSIZE, 1)); // Prologue footer
     put(shift(heap_list, (2 * WSIZE)), pack(WSIZE, 1));
-    put(shift(heap_list, (3 * WSIZE)), pack(0, 1));         // Epilogue header
+    put(shift(heap_list, (3 * WSIZE)), pack(0, 1)); // Epilogue header
 
     // The heap will be growing from between the prologue and the epilogue, so that we could
     // make sure that all is well
@@ -661,10 +662,11 @@ void mm_free(void *ptr)
     put(header_pointer(ptr), pack(size, 0));
     put(footer_pointer(ptr), pack(size, 0));
 
-    coalesce(ptr);
-
-    // Add the free block to size class linked list
-
+    coalesce_counter++;
+    if (coalesce_counter > 2) {
+        coalesce(ptr);
+        coalesce_counter = 0;
+    }
     return;
 }
 
@@ -689,15 +691,45 @@ void *mm_realloc(void *ptr, size_t size)
     // Resize pointer
     if (ptr != NULL && size > 0)
     {
-        size_t block_size = get_size(get(ptr));
+        size_t block_size = get_size(get(shift(ptr, -WSIZE)));
+        size_t aligned_size = align_to_word(size) + 2 * WSIZE;
 
-        if (block_size < size)
+        if (block_size < aligned_size)
         {
             // This is what we need to work on quite extensively
+            // Look for bigger  free block
+            // If exists, then allocate the existing new block, free the old block, done.
+            size_t *new_block;
+            if ((new_block = get_free_block(get_class(aligned_size), aligned_size)) == NULL)
+            {
+                // Extend heap 
+                if  ((new_block = extend_heap(aligned_size)) == NULL)
+                    return NULL;
+            }
+                
+            memcpy(shift(new_block,WSIZE),ptr, block_size);
+            put(shift(new_block,-WSIZE),pack(aligned_size-(2*WSIZE), 1));
+            put(shift(new_block,aligned_size),pack(aligned_size-(2*WSIZE), 1));
+            remove_free_block(new_block);
+            add_free_block(get_class(block_size), shift(ptr, -WSIZE));
+            return new_block;
         }
-        else if (block_size > size)
+        else if (block_size > aligned_size)
         {
-            // Split it
+            // Figure out the new block size
+            // Make new free block
+            // Add new free block to list
+            // Return old
+            size_t new_size = block_size - aligned_size;
+            size_t header = pack(aligned_size - 2 * WSIZE, 1);
+
+            put(shift(ptr, -WSIZE), header);
+            put(shift(ptr, aligned_size - 2 * WSIZE), header);
+
+            size_t *new_block = shift(ptr, aligned_size - WSIZE);
+            put(shift(new_block, WSIZE), pack(new_size - 2 * WSIZE, 0));
+            put(shift(new_block, new_size - WSIZE), pack(new_size - 2 * WSIZE, 0));
+            add_free_block(get_class(new_size), new_block);
         }
         else if (block_size == size)
         {
@@ -727,7 +759,6 @@ static void *extend_heap(size_t bytes)
  */
 static void *coalesce(void *bp)
 {
-
     // Double checking to see if the addresses are actually expected ones
     if (!valid_heap_address(bp) || bp == NULL)
         return;
@@ -742,10 +773,10 @@ static void *coalesce(void *bp)
 
     //decided to create two pointers for the headers of next and previous to cut down number of function calls.
     //seems to improve the Kops even without the -O2 flag
-    size_t* nextNode = ((size_t) next) - 3*WSIZE;
-    size_t* prevNode = ((size_t) prev) - 3*WSIZE;
+    size_t *nextNode = ((size_t)next) - 3 * WSIZE;
+    size_t *prevNode = ((size_t)prev) - 3 * WSIZE;
 
-    size_t prevSize =  get_size(prevNode);
+    size_t prevSize = get_size(prevNode);
     size_t nextSize = get_size(nextNode);
 
     // Checking if either of the conditions is NULL, and barring that, checking if there is any undefined
@@ -768,19 +799,19 @@ static void *coalesce(void *bp)
     {
         size += prevSize + 6 * WSIZE;
         remove_free_block(prevNode);
-        put(bp-(3*WSIZE)-prevSize, pack(size, 0));
-        put(bp+(2*WSIZE)+curSize, pack(size, 0));
+        put(bp - (3 * WSIZE) - prevSize, pack(size, 0));
+        put(bp + (2 * WSIZE) + curSize, pack(size, 0));
         bp = prev;
-        //puts("Coalesced on Case 1\n");
+        // puts("Coalesced on Case 1\n");
     }
     // Case 3: prev allocated, next free -> coalesce with next
     else if (get_alloc(nextNode) == 0 && get_alloc(prevNode) != 0)
     {
         size += nextSize + 6 * WSIZE;
         remove_free_block(nextNode);
-        put(bp-(3*WSIZE), pack(size, 0));
-        put(bp+(7*WSIZE)+curSize+nextSize, pack(size, 0));
-        //puts("Coalesced on Case 2\n");
+        put(bp - (3 * WSIZE), pack(size, 0));
+        put(bp + (7 * WSIZE) + curSize + nextSize, pack(size, 0));
+        // puts("Coalesced on Case 2\n");
     }
     // Case 4: prev free, next free -> coalesce with both
     else if (get_alloc(nextNode) == 0 && get_alloc(prevNode) == 0)
@@ -788,10 +819,10 @@ static void *coalesce(void *bp)
         size += prevSize + nextSize + 8 * WSIZE;
         remove_free_block(nextNode);
         remove_free_block(prevNode);
-        put(bp-(4*WSIZE)-prevSize, pack(size, 0));
-        put(bp+(6*WSIZE)+curSize+nextSize, pack(size, 0));
+        put(bp - (4 * WSIZE) - prevSize, pack(size, 0));
+        put(bp + (6 * WSIZE) + curSize + nextSize, pack(size, 0));
         bp = prev;
-        //puts("Coalesced on Case 3\n");
+        // puts("Coalesced on Case 3\n");
     }
 
     add_free_block(get_class(align_to_word(size)), bp);
@@ -804,23 +835,23 @@ static void *coalesce(void *bp)
  * 
  * ASSUMPTIONS: newsize includes both header and footer and is already aligned
  */
-static void split_block(void *ptr, size_t newsize)
-{
-    // Get the size and then figure out how large the payload is
-    size_t size = get_size(ptr);
-    size_t payload = newsize - 2 * WSIZE;
+// static void split_block(void *ptr, size_t newsize)
+// {
+//     // Get the size and then figure out how large the payload is
+//     size_t size = get_size(ptr);
+//     size_t payload = newsize - 2 * WSIZE;
 
-    // Write the header and footer blocks
-    put(ptr, pack(payload, 1));
-    put(shift(ptr, payload), pack(payload, 1));
+//     // Write the header and footer blocks
+//     put(ptr, pack(payload, 1));
+//     put(shift(ptr, payload), pack(payload, 1));
 
-    // Then handle the new chunk
-    size_t chunksize = size - newsize;
-    size_t *new_chunk = shift(ptr, newsize);
+//     // Then handle the new chunk
+//     size_t chunksize = size - newsize;
+//     size_t *new_chunk = shift(ptr, newsize);
 
-    put(new_chunk, pack(chunksize - 2 * WSIZE, 0));
-    put(shift(new_chunk, chunksize - 2 * WSIZE), pack(chunksize - 2 * WSIZE, 0));
+//     put(new_chunk, pack(chunksize - 2 * WSIZE, 0));
+//     put(shift(new_chunk, chunksize - 2 * WSIZE), pack(chunksize - 2 * WSIZE, 0));
 
-    // Finally, add the new chunk to the appropriate free list
-    add_free_block(get_class(chunksize), new_chunk);
-}
+//     // Finally, add the new chunk to the appropriate free list
+//     add_free_block(get_class(chunksize), new_chunk);
+// }
